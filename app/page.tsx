@@ -8,44 +8,10 @@ import { Label } from "../components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Badge } from "../components/ui/badge";
 import { Separator } from "../components/ui/separator";
-import {
-  Plus, Trash2, Gauge, DollarSign, AlertTriangle,
-  SlidersHorizontal, Database, Bug
-} from "lucide-react";
+import { Plus, Trash2, Gauge, DollarSign, AlertTriangle, SlidersHorizontal, Database, Bug } from "lucide-react";
 import { motion } from "framer-motion";
-import dynamic from "next/dynamic";
 
-/** -------- Recharts: safest dynamic mapping (named -> default) -------- */
-const ResponsiveContainer = dynamic(
-  () => import("recharts").then((m) => ({ default: m.ResponsiveContainer })),
-  { ssr: false }
-);
-const BarChart = dynamic(
-  () => import("recharts").then((m) => ({ default: m.BarChart })),
-  { ssr: false }
-);
-const Bar = dynamic(
-  () => import("recharts").then((m) => ({ default: m.Bar })),
-  { ssr: false }
-);
-const XAxis = dynamic(
-  () => import("recharts").then((m) => ({ default: m.XAxis })),
-  { ssr: false }
-);
-const YAxis = dynamic(
-  () => import("recharts").then((m) => ({ default: m.YAxis })),
-  { ssr: false }
-);
-const Tooltip = dynamic(
-  () => import("recharts").then((m) => ({ default: m.Tooltip })),
-  { ssr: false }
-);
-const CartesianGrid = dynamic(
-  () => import("recharts").then((m) => ({ default: m.CartesianGrid })),
-  { ssr: false }
-);
-
-/** -------- Types -------- */
+/** ---------- Types ---------- */
 type Offer = { id: string; name: string; asp: number; gm: number; share: number };
 type HeadcountRow = { id: string; role: string; fte: number; focusHrs: number; util: number; contractors: number };
 type FunnelCounts = { awareness: number; lead: number; qualified: number; booked: number; show: number; proposal: number; closeWon: number };
@@ -53,28 +19,16 @@ type BacklogItem = { id: string; stage: string; units: number };
 type Cash = { cac: number; dso: number; paybackDays: number; prepayShare: number };
 type StageRow = { id: string; stage: string; unit: string; owner: string; fte: number; focusHrs: number; util: number; stdRate: number; yield: number };
 
-/** -------- Helpers -------- */
+/** ---------- Helpers ---------- */
 const fmt = (n: number, d = 0) => Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: d }) : "";
 const safe = (n: number, alt = 0) => (Number.isFinite(n) && !Number.isNaN(n) ? n : alt);
 const sum = (arr: number[]) => arr.reduce((a, b) => a + safe(b), 0);
 const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 
-/** -------- Percent input (shows XX.XX, stores 0..1) -------- */
+/** ---------- Percent input (shows XX.XX%, stores 0..1) ---------- */
 function PercentInput({
-  value,
-  onChange,
-  step = 0.01,
-  min = 0,
-  max = 100,
-  className,
-}: {
-  value: number;                 // stored as 0..1
-  onChange: (v: number) => void; // expect 0..1
-  step?: number;
-  min?: number;
-  max?: number;
-  className?: string;
-}) {
+  value, onChange, step = 0.01, min = 0, max = 100, className,
+}: { value: number; onChange: (v: number) => void; step?: number; min?: number; max?: number; className?: string }) {
   const display = Number.isFinite(value) ? Number((value * 100).toFixed(2)) : 0;
   return (
     <div className="relative">
@@ -95,7 +49,83 @@ function PercentInput({
   );
 }
 
-/** -------- Defaults -------- */
+/** ---------- Simple, built-in SVG bar chart (no external libs) ---------- */
+function SimpleBarChart({
+  data,
+  height = 240,
+  barColor = "#4f46e5",
+}: {
+  data: { name: string; capacity: number }[];
+  height?: number;
+  barColor?: string;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [w, setW] = useState(0);
+
+  useEffect(() => {
+    if (!ref.current) return;
+    const ro = new ResizeObserver(entries => {
+      const cr = entries[0]?.contentRect;
+      if (cr?.width) setW(cr.width);
+    });
+    ro.observe(ref.current);
+    return () => ro.disconnect();
+  }, []);
+
+  const margin = { top: 20, right: 12, bottom: 40, left: 50 };
+  const width = Math.max(320, w);
+  const innerW = width - margin.left - margin.right;
+  const innerH = height - margin.top - margin.bottom;
+
+  const maxY = Math.max(1, ...data.map(d => d.capacity || 0));
+  const xCount = data.length;
+  const gap = 12;
+  const barW = xCount > 0 ? Math.max(8, (innerW - gap * (xCount - 1)) / xCount) : 0;
+
+  return (
+    <div ref={ref} className="w-full" style={{ height }}>
+      <svg width={width} height={height} role="img" aria-label="Capacity by stage chart">
+        {/* Axes */}
+        <g transform={`translate(${margin.left},${margin.top})`}>
+          {/* Y ticks (4) */}
+          {[0, 0.33, 0.66, 1].map((t, i) => {
+            const y = innerH - t * innerH;
+            const val = Math.round(t * maxY);
+            return (
+              <g key={i} transform={`translate(0,${y})`}>
+                <line x1={0} x2={innerW} stroke="#e5e7eb" strokeDasharray="3 3" />
+                <text x={-10} y={4} textAnchor="end" fontSize="10" fill="#6b7280">{val}</text>
+              </g>
+            );
+          })}
+          {/* Bars */}
+          {data.map((d, i) => {
+            const x = i * (barW + gap);
+            const h = maxY > 0 ? Math.max(0, (d.capacity / maxY) * innerH) : 0;
+            return (
+              <g key={d.name} transform={`translate(${x}, ${innerH - h})`}>
+                <rect width={barW} height={h} rx={8} ry={8} fill={barColor} />
+                {/* value label */}
+                <text x={barW / 2} y={-6} textAnchor="middle" fontSize="10" fill="#111827">
+                  {fmt(d.capacity, 0)}
+                </text>
+                {/* x label */}
+                <text x={barW / 2} y={h + 14} textAnchor="middle" fontSize="10" fill="#6b7280">
+                  {d.name.length > 10 ? d.name.slice(0, 10) + "…" : d.name}
+                </text>
+              </g>
+            );
+          })}
+          {/* Axis lines */}
+          <line x1={0} y1={innerH} x2={innerW} y2={innerH} stroke="#9ca3af" />
+          <line x1={0} y1={0} x2={0} y2={innerH} stroke="#9ca3af" />
+        </g>
+      </svg>
+    </div>
+  );
+}
+
+/** ---------- Defaults ---------- */
 const DEFAULT_STAGES: StageRow[] = [
   { id: "s1",  stage: "Awareness",          unit: "lead",    owner: "Marketing",    fte: 0, focusHrs: 0, util: 0.85, stdRate: 0,    yield: 1 },
   { id: "s2",  stage: "Lead",               unit: "lead",    owner: "Marketing/SDR",fte: 0, focusHrs: 0, util: 0.85, stdRate: 0,    yield: 1 },
@@ -110,7 +140,7 @@ const DEFAULT_STAGES: StageRow[] = [
   { id: "s11", stage: "Renewal/Expansion",  unit: "client",  owner: "CS",           fte: 0, focusHrs: 0, util: 0.85, stdRate: 0,    yield: 1 },
 ];
 
-/** -------- Presets (illustrative only) -------- */
+/** ---------- Presets (illustrative) ---------- */
 type Preset = {
   name: string;
   days: number;
@@ -180,45 +210,8 @@ const PRESETS: Record<string, Preset> = {
   }
 };
 
-/** -------- Safe chart wrapper (measures size before rendering) -------- */
-function SafeCapacityChart({ data }: { data: { name: string; capacity: number }[] }) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
-
-  useEffect(() => {
-    if (!ref.current) return;
-    const el = ref.current;
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const cr = entry.contentRect;
-        setSize({ w: cr.width, h: cr.height });
-      }
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  return (
-    <div ref={ref} className="w-full h-[240px]">
-      {size.w > 0 && size.h > 0 ? (
-        <ResponsiveContainer width={size.w} height={size.h}>
-          <BarChart data={data}>
-            <CartesianGrid vertical={false} strokeDasharray="3 3" />
-            <XAxis dataKey="name" />
-            <YAxis />
-            <Tooltip />
-            <Bar dataKey="capacity" fill="#4f46e5" radius={[8,8,0,0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      ) : (
-        <div className="w-full h-full grid place-items-center text-xs text-gray-500">Loading chart…</div>
-      )}
-    </div>
-  );
-}
-
-/** -------- Component -------- */
-export default function RFTEWithPresets() {
+/** ---------- Component ---------- */
+export default function RFTEWithPresets_NoLibChart() {
   // State (start with cargo-like preset)
   const [presetKey, setPresetKey] = useState<string>("cargo_like");
   const P = PRESETS[presetKey];
@@ -238,7 +231,7 @@ export default function RFTEWithPresets() {
   const weightedASP = useMemo(() => sum(offers.map(o => o.asp * o.share)), [offers]);
   const weightedGM  = useMemo(() => sum(offers.map(o => o.gm  * o.share)) / (sum(offers.map(o => o.share)) || 1), [offers]);
 
-  // conversions (from funnel) -> product for downstream multiplier
+  // conversions (from funnel)
   const cAwareLead  = useMemo(() => (funnel.awareness ? safe(funnel.lead     / funnel.awareness, 0) : 0), [funnel]);
   const cLeadQual   = useMemo(() => (funnel.lead       ? safe(funnel.qualified/ funnel.lead,       0) : 0), [funnel]);
   const cQualBooked = useMemo(() => (funnel.qualified  ? safe(funnel.booked   / funnel.qualified,  0) : 0), [funnel]);
@@ -247,7 +240,8 @@ export default function RFTEWithPresets() {
   const cPropClose  = useMemo(() => (funnel.proposal   ? safe(funnel.closeWon / funnel.proposal,   0) : 0), [funnel]);
 
   const prodFromAw  = useMemo(
-    () => [cAwareLead, cLeadQual, cQualBooked, cBookedShow, cShowProp, cPropClose].reduce((a, b) => a * (Number.isFinite(b) && b > 0 ? b : 1), 1),
+    () => [cAwareLead, cLeadQual, cQualBooked, cBookedShow, cShowProp, cPropClose]
+          .reduce((a, b) => a * (Number.isFinite(b) && b > 0 ? b : 1), 1),
     [cAwareLead, cLeadQual, cQualBooked, cBookedShow, cShowProp, cPropClose]
   );
 
@@ -332,40 +326,6 @@ export default function RFTEWithPresets() {
   const removeOffer  = (id: string) => setOffers(prev => prev.filter(o => o.id !== id));
   const setBacklogUnits = (id: string, units: number) => setBacklog(prev => prev.map(b => b.id === id ? { ...b, units } : b));
 
-  // Quick inputs (all clean numbers; Prepay shown as %)
-  const quickRows = [
-    {
-      label: "Window (days)",
-      control: (
-        <Input type="number" value={days} onChange={(e) => setDays(parseFloat(e.target.value) || 0)} />
-      ),
-    },
-    {
-      label: "CAC",
-      control: (
-        <Input type="number" value={cash.cac} onChange={(e) => setCash({ ...cash, cac: parseFloat(e.target.value) || 0 })} />
-      ),
-    },
-    {
-      label: "DSO (days)",
-      control: (
-        <Input type="number" value={cash.dso} onChange={(e) => setCash({ ...cash, dso: parseFloat(e.target.value) || 0 })} />
-      ),
-    },
-    {
-      label: "Payback (days)",
-      control: (
-        <Input type="number" value={cash.paybackDays} onChange={(e) => setCash({ ...cash, paybackDays: parseFloat(e.target.value) || 0 })} />
-      ),
-    },
-    {
-      label: "Prepay share",
-      control: (
-        <PercentInput value={cash.prepayShare} onChange={(v) => setCash({ ...cash, prepayShare: v })} />
-      ),
-    },
-  ] as const;
-
   return (
     <main className="mx-auto max-w-7xl p-6 space-y-6">
       {/* Header */}
@@ -383,10 +343,12 @@ export default function RFTEWithPresets() {
                 <option key={k} value={k}>{p.name}</option>
               ))}
             </select>
-            <Button onClick={() => applyPreset(presetKey)} className="flex items-center gap-1"><Database className="h-4 w-4"/> Load Preset</Button>
+            <Button onClick={() => applyPreset(presetKey)} className="flex items-center gap-1">
+              <Database className="h-4 w-4"/> Load Preset
+            </Button>
           </div>
         </div>
-        <p className="text-gray-600">Use a preset to see live figures, then tweak quickly in the table below.</p>
+        <p className="text-gray-600">Use a preset to see live figures, then tweak quickly in the panels below.</p>
       </motion.div>
 
       {/* Executive tiles */}
@@ -413,11 +375,11 @@ export default function RFTEWithPresets() {
         </CardContent></Card>
       </div>
 
-      {/* Capacity by Stage (Safe) */}
+      {/* Capacity by Stage (Built-in chart) */}
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><Gauge className="h-5 w-5"/>Capacity by Stage</CardTitle></CardHeader>
         <CardContent>
-          <SafeCapacityChart data={stages.map((s, i) => ({ name: s.stage, capacity: capsPerWeek[i]?.cap ?? 0 }))} />
+          <SimpleBarChart data={stages.map((s, i) => ({ name: s.stage, capacity: capsPerWeek[i]?.cap ?? 0 }))} />
           <div className="mt-2 text-xs text-gray-500">Capacity/wk = FTE × FocusHrs × Util × StdRate × Yield</div>
         </CardContent>
       </Card>
@@ -427,14 +389,28 @@ export default function RFTEWithPresets() {
         <CardHeader><CardTitle className="flex items-center gap-2"><SlidersHorizontal className="h-5 w-5"/>Quick Inputs</CardTitle></CardHeader>
         <CardContent className="space-y-2">
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-3">
-            {quickRows.map((r, idx) => (
-              <div key={idx} className="rounded-xl border p-3 bg-white">
-                <div className="text-xs text-gray-500 mb-1">{r.label}</div>
-                {r.control}
-              </div>
-            ))}
+            <div className="rounded-xl border p-3 bg-white">
+              <div className="text-xs text-gray-500 mb-1">Window (days)</div>
+              <Input type="number" value={days} onChange={(e) => setDays(parseFloat(e.target.value) || 0)} />
+            </div>
+            <div className="rounded-xl border p-3 bg-white">
+              <div className="text-xs text-gray-500 mb-1">CAC</div>
+              <Input type="number" value={cash.cac} onChange={(e) => setCash({ ...cash, cac: parseFloat(e.target.value) || 0 })} />
+            </div>
+            <div className="rounded-xl border p-3 bg-white">
+              <div className="text-xs text-gray-500 mb-1">DSO (days)</div>
+              <Input type="number" value={cash.dso} onChange={(e) => setCash({ ...cash, dso: parseFloat(e.target.value) || 0 })} />
+            </div>
+            <div className="rounded-xl border p-3 bg-white">
+              <div className="text-xs text-gray-500 mb-1">Payback (days)</div>
+              <Input type="number" value={cash.paybackDays} onChange={(e) => setCash({ ...cash, paybackDays: parseFloat(e.target.value) || 0 })} />
+            </div>
+            <div className="rounded-xl border p-3 bg-white">
+              <div className="text-xs text-gray-500 mb-1">Prepay share</div>
+              <PercentInput value={cash.prepayShare} onChange={(v) => setCash({ ...cash, prepayShare: v })} />
+            </div>
           </div>
-          <p className="text-xs text-gray-500">Percent fields show with two decimals, but store clean decimals (0..1) under the hood.</p>
+          <p className="text-xs text-gray-500">Percent fields show two decimals but store clean decimals (0..1) under the hood.</p>
         </CardContent>
       </Card>
 
