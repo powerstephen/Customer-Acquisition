@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -10,12 +10,12 @@ import { Badge } from "../components/ui/badge";
 import { Separator } from "../components/ui/separator";
 import {
   Plus, Trash2, Gauge, DollarSign, Users, AlertTriangle,
-  Brain, SlidersHorizontal, TrendingUp, Download, Upload, Database
+  SlidersHorizontal, Database, Bug
 } from "lucide-react";
 import { motion } from "framer-motion";
 import dynamic from "next/dynamic";
 
-// --- Recharts: client-only (prevents SSR crashes)
+// --- Recharts client-only imports
 const ResponsiveContainer = dynamic(() => import("recharts").then(m => m.ResponsiveContainer), { ssr: false });
 const BarChart            = dynamic(() => import("recharts").then(m => m.BarChart), { ssr: false });
 const Bar                 = dynamic(() => import("recharts").then(m => m.Bar), { ssr: false });
@@ -55,7 +55,7 @@ const DEFAULT_STAGES: StageRow[] = [
   { id: "s11", stage: "Renewal/Expansion",  unit: "client",  owner: "CS",           fte: 0, focusHrs: 0, util: 0.85, stdRate: 0,    yield: 1 },
 ];
 
-// ---------- Presets (illustrative numbers) ----------
+// ---------- Presets (illustrative only) ----------
 type Preset = {
   name: string;
   days: number;
@@ -84,10 +84,10 @@ const PRESETS: Record<string, Preset> = {
     ],
     funnel: { awareness: 20000, lead: 1200, qualified: 420, booked: 260, show: 210, proposal: 140, closeWon: 70 },
     stages: [
-      { ...DEFAULT_STAGES[0], fte: 2, focusHrs: 18, util: 0.7,  stdRate: 15, yield: 1   }, // awareness ops rate = 15 leads/hr eq
-      { ...DEFAULT_STAGES[1], fte: 2, focusHrs: 22, util: 0.75, stdRate: 2,  yield: 0.9 }, // lead handling
+      { ...DEFAULT_STAGES[0], fte: 2, focusHrs: 18, util: 0.7,  stdRate: 15, yield: 1   },
+      { ...DEFAULT_STAGES[1], fte: 2, focusHrs: 22, util: 0.75, stdRate: 2,  yield: 0.9 },
       { ...DEFAULT_STAGES[2], fte: 2, focusHrs: 22, util: 0.8,  stdRate: 1.2,yield: 0.9 },
-      { ...DEFAULT_STAGES[3], fte: 2, focusHrs: 22, util: 0.8,  stdRate: 8,  yield: 0.9 }, // bookings per hr
+      { ...DEFAULT_STAGES[3], fte: 2, focusHrs: 22, util: 0.8,  stdRate: 8,  yield: 0.9 },
       { ...DEFAULT_STAGES[4], fte: 2, focusHrs: 22, util: 0.8,  stdRate: 6,  yield: 0.88},
       { ...DEFAULT_STAGES[5], fte: 1, focusHrs: 20, util: 0.85, stdRate: 4,  yield: 0.9 },
       { ...DEFAULT_STAGES[6], fte: 2, focusHrs: 22, util: 0.85, stdRate: 2.5,yield: 0.95},
@@ -118,47 +118,64 @@ const PRESETS: Record<string, Preset> = {
       { ...DEFAULT_STAGES[4], fte: 1, focusHrs: 20, util: 0.8,  stdRate: 4,  yield: 0.88 },
       { ...DEFAULT_STAGES[5], fte: 1, focusHrs: 20, util: 0.85, stdRate: 3,  yield: 0.9 },
       { ...DEFAULT_STAGES[6], fte: 1, focusHrs: 20, util: 0.85, stdRate: 2,  yield: 0.95 },
-      ...DEFAULT_STAGES.slice(7), // keep delivery defaults
-    ],
-    backlog: DEFAULT_STAGES.map(s => ({ id: s.id, stage: s.stage, units: 0 })),
-    cash: { cac: 1500, dso: 30, paybackDays: 90, prepayShare: 0.2 },
-  },
-  marketplace_seed: {
-    name: "Marketplace Seed (lean)",
-    days: 60,
-    offers: [{ id: "o1", name: "Starter", asp: 2500, gm: 0.7, share: 1 }],
-    headcount: [
-      { id: "h1", role: "Founder-led Sales", fte: 1, focusHrs: 25, util: 0.75, contractors: 0 },
-      { id: "h2", role: "Ops",               fte: 0.5, focusHrs: 20, util: 0.75, contractors: 0 },
-    ],
-    funnel: { awareness: 2000, lead: 160, qualified: 70, booked: 40, show: 30, proposal: 18, closeWon: 9 },
-    stages: [
-      { ...DEFAULT_STAGES[0], fte: 0.5, focusHrs: 15, util: 0.7, stdRate: 8, yield: 1 },
-      { ...DEFAULT_STAGES[1], fte: 0.5, focusHrs: 15, util: 0.75, stdRate: 1, yield: 0.9 },
-      { ...DEFAULT_STAGES[2], fte: 0.5, focusHrs: 15, util: 0.8, stdRate: 0.8, yield: 0.9 },
-      { ...DEFAULT_STAGES[3], fte: 0.5, focusHrs: 15, util: 0.8, stdRate: 4, yield: 0.9 },
-      { ...DEFAULT_STAGES[4], fte: 0.5, focusHrs: 15, util: 0.8, stdRate: 3, yield: 0.88 },
-      { ...DEFAULT_STAGES[5], fte: 0.5, focusHrs: 15, util: 0.85, stdRate: 2, yield: 0.9 },
-      { ...DEFAULT_STAGES[6], fte: 0.5, focusHrs: 15, util: 0.85, stdRate: 1.2, yield: 0.95 },
       ...DEFAULT_STAGES.slice(7),
     ],
     backlog: DEFAULT_STAGES.map(s => ({ id: s.id, stage: s.stage, units: 0 })),
-    cash: { cac: 800, dso: 20, paybackDays: 60, prepayShare: 0.35 },
+    cash: { cac: 1500, dso: 30, paybackDays: 90, prepayShare: 0.2 },
   }
 };
 
+// ---------- SafeChart wrapper (fixes blank chart issues) ----------
+function SafeCapacityChart({ data }: { data: { name: string; capacity: number }[] }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+
+  useEffect(() => {
+    if (!ref.current) return;
+    const el = ref.current;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const cr = entry.contentRect;
+        setSize({ w: cr.width, h: cr.height });
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  return (
+      <div ref={ref} className="w-full h-[220px]">
+        {size.w > 0 && size.h > 0 ? (
+          <ResponsiveContainer width={size.w} height={size.h}>
+            <BarChart data={data}>
+              <CartesianGrid vertical={false} strokeDasharray="3 3" />
+              <XAxis dataKey="name" />
+              <YAxis />
+              <Tooltip />
+              <Bar dataKey="capacity" fill="#4f46e5" radius={[8,8,0,0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className="w-full h-full grid place-items-center text-xs text-gray-500">Loading chart…</div>
+        )}
+      </div>
+  );
+}
+
 // ---------- Component ----------
 export default function RFTEWithPresets() {
-  // State
-  const [days, setDays] = useState<number>(PRESETS.cargo_like.days);
-  const [offers, setOffers] = useState<Offer[]>(PRESETS.cargo_like.offers);
-  const [headcount, setHeadcount] = useState<HeadcountRow[]>(PRESETS.cargo_like.headcount);
-  const [funnel, setFunnel] = useState<FunnelCounts>(PRESETS.cargo_like.funnel);
-  const [stages, setStages] = useState<StageRow[]>(PRESETS.cargo_like.stages);
-  const [backlog, setBacklog] = useState<BacklogItem[]>(PRESETS.cargo_like.backlog);
-  const [cash, setCash] = useState<Cash>(PRESETS.cargo_like.cash);
-
+  // State (start with cargo-like preset)
   const [presetKey, setPresetKey] = useState<string>("cargo_like");
+  const P = PRESETS[presetKey];
+
+  const [days, setDays] = useState<number>(P.days);
+  const [offers, setOffers] = useState<Offer[]>(P.offers);
+  const [headcount, setHeadcount] = useState<HeadcountRow[]>(P.headcount);
+  const [funnel, setFunnel] = useState<FunnelCounts>(P.funnel);
+  const [stages, setStages] = useState<StageRow[]>(P.stages);
+  const [backlog, setBacklog] = useState<BacklogItem[]>(P.backlog);
+  const [cash, setCash] = useState<Cash>(P.cash);
+  const [showExport, setShowExport] = useState<boolean>(false);
 
   // Derived
   const weeks = useMemo(() => safe(days / 7, 0), [days]);
@@ -260,19 +277,13 @@ export default function RFTEWithPresets() {
   const removeOffer  = (id: string) => setOffers(prev => prev.filter(o => o.id !== id));
   const setBacklogUnits = (id: string, units: number) => setBacklog(prev => prev.map(b => b.id === id ? { ...b, units } : b));
 
-  // Quick table rows
+  // Quick inputs
   const quickRows = [
     { label: "Window (days)",     value: days, onChange: (v: number) => setDays(v) },
     { label: "CAC",               value: cash.cac, onChange: (v: number) => setCash({ ...cash, cac: v }) },
     { label: "DSO (days)",        value: cash.dso, onChange: (v: number) => setCash({ ...cash, dso: v }) },
     { label: "Payback (days)",    value: cash.paybackDays, onChange: (v: number) => setCash({ ...cash, paybackDays: v }) },
     { label: "Prepay share (0..1)", value: cash.prepayShare, onChange: (v: number) => setCash({ ...cash, prepayShare: v }) },
-    { label: "Awareness → Lead",  value: cAwareLead, onChange: (v: number) => setFunnel({ ...funnel, lead: v * (funnel.awareness || 0) }) },
-    { label: "Lead → Qualified",  value: cLeadQual, onChange: (v: number) => setFunnel({ ...funnel, qualified: v * (funnel.lead || 0) }) },
-    { label: "Qualified → Booked",value: cQualBooked, onChange: (v: number) => setFunnel({ ...funnel, booked: v * (funnel.qualified || 0) }) },
-    { label: "Booked → Show",     value: cBookedShow, onChange: (v: number) => setFunnel({ ...funnel, show: v * (funnel.booked || 0) }) },
-    { label: "Show → Proposal",   value: cShowProp, onChange: (v: number) => setFunnel({ ...funnel, proposal: v * (funnel.show || 0) }) },
-    { label: "Proposal → Close",  value: cPropClose, onChange: (v: number) => setFunnel({ ...funnel, closeWon: v * (funnel.proposal || 0) }) },
   ] as const;
 
   return (
@@ -280,7 +291,7 @@ export default function RFTEWithPresets() {
       {/* Header */}
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
         <div className="flex items-center justify-between flex-wrap gap-3">
-          <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">R/FTE Bottleneck Mapper — with Presets</h1>
+          <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">R/FTE Bottleneck Mapper — Presets</h1>
           <div className="flex items-center gap-2">
             <select
               value={presetKey}
@@ -315,35 +326,25 @@ export default function RFTEWithPresets() {
           <div className="text-2xl font-semibold">${fmt(rfteCeil,0)}</div>
           <div className="text-xs">Total FTE: {fmt(totalFTE,2)}</div>
         </CardContent></Card>
-        <Card><CardContent className="p-4">
+        <Card><CardContent className={`p-4 ${cashFlag ? "bg-red-50" : ""}`}>
           <div className="text-xs text-gray-500">Cash signal (GP30/CAC)</div>
           <div className={`text-2xl font-semibold ${cashFlag ? "text-red-600" : "text-emerald-600"}`}>{fmt(gp30CAC,2)}</div>
           <div className="text-xs">{cashFlag ? "Treat cash as constraint" : "Cash ok (≥ 3 preferred)"}</div>
         </CardContent></Card>
       </div>
 
-      {/* Capacity by Stage */}
+      {/* Capacity by Stage (Safe) */}
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><Gauge className="h-5 w-5"/>Capacity by Stage</CardTitle></CardHeader>
         <CardContent>
-          <div style={{ height: 200 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={stages.map((s, i) => ({ name: s.stage, capacity: capsPerWeek[i]?.cap ?? 0 }))}>
-                <CartesianGrid vertical={false} strokeDasharray="3 3" />
-                <XAxis dataKey="name" />
-                <YAxis />
-                <Tooltip />
-                <Bar dataKey="capacity" fill="#4f46e5" radius={[8,8,0,0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          <SafeCapacityChart data={stages.map((s, i) => ({ name: s.stage, capacity: capsPerWeek[i]?.cap ?? 0 }))} />
           <div className="mt-2 text-xs text-gray-500">Capacity/wk = FTE × FocusHrs × Util × StdRate × Yield</div>
         </CardContent>
       </Card>
 
       {/* Quick Inputs Table */}
       <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><SlidersHorizontal className="h-5 w-5"/>Quick Inputs Table</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="flex items-center gap-2"><SlidersHorizontal className="h-5 w-5"/>Quick Inputs</CardTitle></CardHeader>
         <CardContent className="space-y-2">
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-3">
             {quickRows.map((r, idx) => (
@@ -355,9 +356,7 @@ export default function RFTEWithPresets() {
               </div>
             ))}
           </div>
-          <p className="text-xs text-gray-500">
-            Conversion cells expect decimal ratios (e.g., 0.35). Table writes back to funnel counts based on current upstream totals.
-          </p>
+          <p className="text-xs text-gray-500">These are the main levers. For deeper editing, use the tabs below.</p>
         </CardContent>
       </Card>
 
@@ -376,7 +375,7 @@ export default function RFTEWithPresets() {
             <CardHeader><CardTitle className="flex items-center gap-2"><DollarSign className="h-5 w-5"/>Offers</CardTitle></CardHeader>
             <CardContent className="space-y-2">
               <div className="flex items-center justify-between">
-                <div className="text-sm text-gray-600">Weighted ASP & GM used in 90d economics.</div>
+                <div className="text-sm text-gray-600">Weighted ASP & GM feed 90d economics.</div>
                 <Button size="sm" onClick={addOffer}><Plus className="h-4 w-4 mr-1"/>Add Offer</Button>
               </div>
               {offers.map(o => (
@@ -458,33 +457,37 @@ export default function RFTEWithPresets() {
         </TabsContent>
       </Tabs>
 
-      {/* Export */}
-      <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><Upload className="h-5 w-5"/>Export JSON</CardTitle></CardHeader>
-        <CardContent>
-          <pre className="text-xs whitespace-pre-wrap p-3 rounded bg-gray-100 overflow-x-auto">
-            {JSON.stringify({
-              preset: PRESETS[presetKey]?.name,
-              inputs_pack: {
-                scope: { days, weeks, totalFTE: totalFTE },
-                offers, headcount, funnel, stages, backlog, cash,
-              },
-              ceiling_pack: {
-                capacitiesPerWeek: capsPerWeek,
-                dealsPerWeekFromStage,
-                system_constraint_candidate: systemDealsPerWeek.stage,
-                dealsPerWeek: systemDealsPerWeek.value,
-                rev90d, gp90d, r_fte_ceiling: rfteCeil,
-                gp30_over_cac: gp30CAC, cash_flag: cashFlag,
-              }
-            }, null, 2)}
-          </pre>
-        </CardContent>
-      </Card>
+      {/* Debug export (hidden by default) */}
+      <div className="flex items-center gap-2">
+        <Button variant="secondary" onClick={() => setShowExport(s => !s)} className="flex items-center gap-2">
+          <Bug className="h-4 w-4"/>{showExport ? "Hide debug export" : "Show debug export"}
+        </Button>
+        <span className="text-xs text-gray-500">For power users who want a JSON snapshot for logs/notes.</span>
+      </div>
+      {showExport && (
+        <Card>
+          <CardHeader><CardTitle>Debug Export (JSON)</CardTitle></CardHeader>
+          <CardContent>
+            <pre className="text-xs whitespace-pre-wrap p-3 rounded bg-gray-100 overflow-x-auto">
+              {JSON.stringify({
+                preset: PRESETS[presetKey]?.name,
+                inputs_pack: { scope: { days, weeks, totalFTE: totalFTE }, offers, headcount, funnel, stages, backlog, cash },
+                ceiling_pack: {
+                  capacitiesPerWeek: capsPerWeek,
+                  dealsPerWeekFromStage,
+                  system_constraint_candidate: systemDealsPerWeek.stage,
+                  dealsPerWeek: systemDealsPerWeek.value,
+                  rev90d, gp90d, r_fte_ceiling: rfteCeil,
+                  gp30_over_cac: gp30CAC, cash_flag: cashFlag,
+                }
+              }, null, 2)}
+            </pre>
+          </CardContent>
+        </Card>
+      )}
 
-      {/* Footer note */}
-      <p className="text-xs text-gray-500">
-        Note: Presets are illustrative, not company-reported numbers. Use the quick table to align with your actual data.
+      <p className="text-[11px] text-gray-500">
+        Presets are illustrative. Replace with your own numbers to reflect reality.
       </p>
     </main>
   );
