@@ -9,38 +9,93 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs"
 import { Badge } from "../components/ui/badge";
 import { Separator } from "../components/ui/separator";
 import {
-  Plus, Trash2, Gauge, DollarSign, Users, AlertTriangle,
+  Plus, Trash2, Gauge, DollarSign, AlertTriangle,
   SlidersHorizontal, Database, Bug
 } from "lucide-react";
 import { motion } from "framer-motion";
 import dynamic from "next/dynamic";
 
-// --- Recharts client-only imports
-const ResponsiveContainer = dynamic(() => import("recharts").then(m => m.ResponsiveContainer), { ssr: false });
-const BarChart            = dynamic(() => import("recharts").then(m => m.BarChart), { ssr: false });
-const Bar                 = dynamic(() => import("recharts").then(m => m.Bar), { ssr: false });
-const XAxis               = dynamic(() => import("recharts").then(m => m.XAxis), { ssr: false });
-const YAxis               = dynamic(() => import("recharts").then(m => m.YAxis), { ssr: false });
-const Tooltip             = dynamic(() => import("recharts").then(m => m.Tooltip), { ssr: false });
-const CartesianGrid       = dynamic(() => import("recharts").then(m => m.CartesianGrid), { ssr: false });
+/** -------- Recharts: safest dynamic mapping (named -> default) -------- */
+const ResponsiveContainer = dynamic(
+  () => import("recharts").then((m) => ({ default: m.ResponsiveContainer })),
+  { ssr: false }
+);
+const BarChart = dynamic(
+  () => import("recharts").then((m) => ({ default: m.BarChart })),
+  { ssr: false }
+);
+const Bar = dynamic(
+  () => import("recharts").then((m) => ({ default: m.Bar })),
+  { ssr: false }
+);
+const XAxis = dynamic(
+  () => import("recharts").then((m) => ({ default: m.XAxis })),
+  { ssr: false }
+);
+const YAxis = dynamic(
+  () => import("recharts").then((m) => ({ default: m.YAxis })),
+  { ssr: false }
+);
+const Tooltip = dynamic(
+  () => import("recharts").then((m) => ({ default: m.Tooltip })),
+  { ssr: false }
+);
+const CartesianGrid = dynamic(
+  () => import("recharts").then((m) => ({ default: m.CartesianGrid })),
+  { ssr: false }
+);
 
-// ---------- Types ----------
+/** -------- Types -------- */
 type Offer = { id: string; name: string; asp: number; gm: number; share: number };
 type HeadcountRow = { id: string; role: string; fte: number; focusHrs: number; util: number; contractors: number };
 type FunnelCounts = { awareness: number; lead: number; qualified: number; booked: number; show: number; proposal: number; closeWon: number };
-type CycleQuality = { bookedToShowDays: number; showToProposalDays: number; proposalToCloseDays: number; noShowRate: number; proposalWin: number };
-type PostClose = { onboardingToAhaDays: number; m1Retention: number; m2Retention: number };
 type BacklogItem = { id: string; stage: string; units: number };
 type Cash = { cac: number; dso: number; paybackDays: number; prepayShare: number };
 type StageRow = { id: string; stage: string; unit: string; owner: string; fte: number; focusHrs: number; util: number; stdRate: number; yield: number };
 
-// ---------- Helpers ----------
+/** -------- Helpers -------- */
 const fmt = (n: number, d = 0) => Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: d }) : "";
 const safe = (n: number, alt = 0) => (Number.isFinite(n) && !Number.isNaN(n) ? n : alt);
 const sum = (arr: number[]) => arr.reduce((a, b) => a + safe(b), 0);
 const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 
-// ---------- Defaults ----------
+/** -------- Percent input (shows XX.XX, stores 0..1) -------- */
+function PercentInput({
+  value,
+  onChange,
+  step = 0.01,
+  min = 0,
+  max = 100,
+  className,
+}: {
+  value: number;                 // stored as 0..1
+  onChange: (v: number) => void; // expect 0..1
+  step?: number;
+  min?: number;
+  max?: number;
+  className?: string;
+}) {
+  const display = Number.isFinite(value) ? Number((value * 100).toFixed(2)) : 0;
+  return (
+    <div className="relative">
+      <Input
+        type="number"
+        step={step}
+        min={min}
+        max={max}
+        className={className}
+        value={display}
+        onChange={(e) => {
+          const raw = parseFloat(e.target.value);
+          onChange((Number.isFinite(raw) ? raw : 0) / 100);
+        }}
+      />
+      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs">%</span>
+    </div>
+  );
+}
+
+/** -------- Defaults -------- */
 const DEFAULT_STAGES: StageRow[] = [
   { id: "s1",  stage: "Awareness",          unit: "lead",    owner: "Marketing",    fte: 0, focusHrs: 0, util: 0.85, stdRate: 0,    yield: 1 },
   { id: "s2",  stage: "Lead",               unit: "lead",    owner: "Marketing/SDR",fte: 0, focusHrs: 0, util: 0.85, stdRate: 0,    yield: 1 },
@@ -55,7 +110,7 @@ const DEFAULT_STAGES: StageRow[] = [
   { id: "s11", stage: "Renewal/Expansion",  unit: "client",  owner: "CS",           fte: 0, focusHrs: 0, util: 0.85, stdRate: 0,    yield: 1 },
 ];
 
-// ---------- Presets (illustrative only) ----------
+/** -------- Presets (illustrative only) -------- */
 type Preset = {
   name: string;
   days: number;
@@ -125,7 +180,7 @@ const PRESETS: Record<string, Preset> = {
   }
 };
 
-// ---------- SafeChart wrapper (fixes blank chart issues) ----------
+/** -------- Safe chart wrapper (measures size before rendering) -------- */
 function SafeCapacityChart({ data }: { data: { name: string; capacity: number }[] }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
@@ -144,25 +199,25 @@ function SafeCapacityChart({ data }: { data: { name: string; capacity: number }[
   }, []);
 
   return (
-      <div ref={ref} className="w-full h-[220px]">
-        {size.w > 0 && size.h > 0 ? (
-          <ResponsiveContainer width={size.w} height={size.h}>
-            <BarChart data={data}>
-              <CartesianGrid vertical={false} strokeDasharray="3 3" />
-              <XAxis dataKey="name" />
-              <YAxis />
-              <Tooltip />
-              <Bar dataKey="capacity" fill="#4f46e5" radius={[8,8,0,0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        ) : (
-          <div className="w-full h-full grid place-items-center text-xs text-gray-500">Loading chart…</div>
-        )}
-      </div>
+    <div ref={ref} className="w-full h-[240px]">
+      {size.w > 0 && size.h > 0 ? (
+        <ResponsiveContainer width={size.w} height={size.h}>
+          <BarChart data={data}>
+            <CartesianGrid vertical={false} strokeDasharray="3 3" />
+            <XAxis dataKey="name" />
+            <YAxis />
+            <Tooltip />
+            <Bar dataKey="capacity" fill="#4f46e5" radius={[8,8,0,0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      ) : (
+        <div className="w-full h-full grid place-items-center text-xs text-gray-500">Loading chart…</div>
+      )}
+    </div>
   );
 }
 
-// ---------- Component ----------
+/** -------- Component -------- */
 export default function RFTEWithPresets() {
   // State (start with cargo-like preset)
   const [presetKey, setPresetKey] = useState<string>("cargo_like");
@@ -183,7 +238,7 @@ export default function RFTEWithPresets() {
   const weightedASP = useMemo(() => sum(offers.map(o => o.asp * o.share)), [offers]);
   const weightedGM  = useMemo(() => sum(offers.map(o => o.gm  * o.share)) / (sum(offers.map(o => o.share)) || 1), [offers]);
 
-  // conversions (from funnel)
+  // conversions (from funnel) -> product for downstream multiplier
   const cAwareLead  = useMemo(() => (funnel.awareness ? safe(funnel.lead     / funnel.awareness, 0) : 0), [funnel]);
   const cLeadQual   = useMemo(() => (funnel.lead       ? safe(funnel.qualified/ funnel.lead,       0) : 0), [funnel]);
   const cQualBooked = useMemo(() => (funnel.qualified  ? safe(funnel.booked   / funnel.qualified,  0) : 0), [funnel]);
@@ -277,13 +332,38 @@ export default function RFTEWithPresets() {
   const removeOffer  = (id: string) => setOffers(prev => prev.filter(o => o.id !== id));
   const setBacklogUnits = (id: string, units: number) => setBacklog(prev => prev.map(b => b.id === id ? { ...b, units } : b));
 
-  // Quick inputs
+  // Quick inputs (all clean numbers; Prepay shown as %)
   const quickRows = [
-    { label: "Window (days)",     value: days, onChange: (v: number) => setDays(v) },
-    { label: "CAC",               value: cash.cac, onChange: (v: number) => setCash({ ...cash, cac: v }) },
-    { label: "DSO (days)",        value: cash.dso, onChange: (v: number) => setCash({ ...cash, dso: v }) },
-    { label: "Payback (days)",    value: cash.paybackDays, onChange: (v: number) => setCash({ ...cash, paybackDays: v }) },
-    { label: "Prepay share (0..1)", value: cash.prepayShare, onChange: (v: number) => setCash({ ...cash, prepayShare: v }) },
+    {
+      label: "Window (days)",
+      control: (
+        <Input type="number" value={days} onChange={(e) => setDays(parseFloat(e.target.value) || 0)} />
+      ),
+    },
+    {
+      label: "CAC",
+      control: (
+        <Input type="number" value={cash.cac} onChange={(e) => setCash({ ...cash, cac: parseFloat(e.target.value) || 0 })} />
+      ),
+    },
+    {
+      label: "DSO (days)",
+      control: (
+        <Input type="number" value={cash.dso} onChange={(e) => setCash({ ...cash, dso: parseFloat(e.target.value) || 0 })} />
+      ),
+    },
+    {
+      label: "Payback (days)",
+      control: (
+        <Input type="number" value={cash.paybackDays} onChange={(e) => setCash({ ...cash, paybackDays: parseFloat(e.target.value) || 0 })} />
+      ),
+    },
+    {
+      label: "Prepay share",
+      control: (
+        <PercentInput value={cash.prepayShare} onChange={(v) => setCash({ ...cash, prepayShare: v })} />
+      ),
+    },
   ] as const;
 
   return (
@@ -342,21 +422,19 @@ export default function RFTEWithPresets() {
         </CardContent>
       </Card>
 
-      {/* Quick Inputs Table */}
+      {/* Quick Inputs */}
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><SlidersHorizontal className="h-5 w-5"/>Quick Inputs</CardTitle></CardHeader>
         <CardContent className="space-y-2">
-          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-3">
             {quickRows.map((r, idx) => (
               <div key={idx} className="rounded-xl border p-3 bg-white">
                 <div className="text-xs text-gray-500 mb-1">{r.label}</div>
-                <Input type="number" step={r.label.includes("→") ? 0.01 : 1}
-                  value={r.value}
-                  onChange={(e) => r.onChange(parseFloat(e.target.value) || 0)} />
+                {r.control}
               </div>
             ))}
           </div>
-          <p className="text-xs text-gray-500">These are the main levers. For deeper editing, use the tabs below.</p>
+          <p className="text-xs text-gray-500">Percent fields show with two decimals, but store clean decimals (0..1) under the hood.</p>
         </CardContent>
       </Card>
 
@@ -382,8 +460,8 @@ export default function RFTEWithPresets() {
                 <div key={o.id} className="grid grid-cols-12 gap-2 items-center">
                   <Input className="col-span-4" placeholder="Name" value={o.name} onChange={e => updateOffer(o.id, { name: e.target.value })}/>
                   <Input className="col-span-2" type="number" placeholder="ASP" value={o.asp} onChange={e => updateOffer(o.id, { asp: parseFloat(e.target.value) || 0 })}/>
-                  <Input className="col-span-2" type="number" step={0.01} placeholder="GM (0..1)" value={o.gm} onChange={e => updateOffer(o.id, { gm: parseFloat(e.target.value) || 0 })}/>
-                  <Input className="col-span-2" type="number" step={0.01} placeholder="Share (0..1)" value={o.share} onChange={e => updateOffer(o.id, { share: parseFloat(e.target.value) || 0 })}/>
+                  <PercentInput className="col-span-2" value={o.gm} onChange={(v) => updateOffer(o.id, { gm: v })} />
+                  <PercentInput className="col-span-2" value={o.share} onChange={(v) => updateOffer(o.id, { share: v })} />
                   <Button className="col-span-2" variant="ghost" onClick={() => removeOffer(o.id)}><Trash2 className="h-4 w-4"/></Button>
                 </div>
               ))}
@@ -407,9 +485,9 @@ export default function RFTEWithPresets() {
                   <Input className="col-span-2" value={s.owner} onChange={e => updateStage(s.id, { owner: e.target.value })} />
                   <Input className="col-span-1" type="number" value={s.fte} onChange={e => updateStage(s.id, { fte: parseFloat(e.target.value) || 0 })} />
                   <Input className="col-span-1" type="number" value={s.focusHrs} onChange={e => updateStage(s.id, { focusHrs: parseFloat(e.target.value) || 0 })} />
-                  <Input className="col-span-1" type="number" step={0.01} value={s.util} onChange={e => updateStage(s.id, { util: parseFloat(e.target.value) || 0 })} />
+                  <PercentInput className="col-span-1" value={s.util} onChange={(v) => updateStage(s.id, { util: v })} />
                   <Input className="col-span-1" type="number" value={s.stdRate} onChange={e => updateStage(s.id, { stdRate: parseFloat(e.target.value) || 0 })} />
-                  <Input className="col-span-1" type="number" step={0.01} value={s.yield} onChange={e => updateStage(s.id, { yield: parseFloat(e.target.value) || 0 })} />
+                  <PercentInput className="col-span-1" value={s.yield} onChange={(v) => updateStage(s.id, { yield: v })} />
                   <div className="col-span-2 text-right text-sm">
                     <div className="rounded bg-gray-100 px-2 py-1">cap: <b>{fmt(capsPerWeek[i]?.cap ?? 0, 2)}</b></div>
                   </div>
@@ -451,18 +529,18 @@ export default function RFTEWithPresets() {
               <div><Label>CAC</Label><Input type="number" value={cash.cac} onChange={e => setCash({ ...cash, cac: parseFloat(e.target.value) || 0 })} /></div>
               <div><Label>DSO (days)</Label><Input type="number" value={cash.dso} onChange={e => setCash({ ...cash, dso: parseFloat(e.target.value) || 0 })} /></div>
               <div><Label>Payback (days)</Label><Input type="number" value={cash.paybackDays} onChange={e => setCash({ ...cash, paybackDays: parseFloat(e.target.value) || 0 })} /></div>
-              <div><Label>Prepay share (0..1)</Label><Input type="number" step={0.01} value={cash.prepayShare} onChange={e => setCash({ ...cash, prepayShare: parseFloat(e.target.value) || 0 })} /></div>
+              <div><Label>Prepay share</Label><PercentInput value={cash.prepayShare} onChange={(v) => setCash({ ...cash, prepayShare: v })} /></div>
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
 
-      {/* Debug export (hidden by default) */}
+      {/* Debug export toggle (hidden by default) */}
       <div className="flex items-center gap-2">
         <Button variant="secondary" onClick={() => setShowExport(s => !s)} className="flex items-center gap-2">
           <Bug className="h-4 w-4"/>{showExport ? "Hide debug export" : "Show debug export"}
         </Button>
-        <span className="text-xs text-gray-500">For power users who want a JSON snapshot for logs/notes.</span>
+        <span className="text-xs text-gray-500">Only if you want a JSON snapshot.</span>
       </div>
       {showExport && (
         <Card>
@@ -486,9 +564,7 @@ export default function RFTEWithPresets() {
         </Card>
       )}
 
-      <p className="text-[11px] text-gray-500">
-        Presets are illustrative. Replace with your own numbers to reflect reality.
-      </p>
+      <p className="text-[11px] text-gray-500">Presets are illustrative only. Replace with your numbers for real insights.</p>
     </main>
   );
 }
