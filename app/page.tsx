@@ -7,7 +7,7 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
-import { Plus, Trash2, DollarSign, AlertTriangle, Database, Bug, Target, TrendingUp, Activity } from "lucide-react";
+import { Plus, Trash2, DollarSign, AlertTriangle, Database, Bug, Target, TrendingUp, Activity, Users } from "lucide-react";
 
 /** ---------- Types ---------- */
 type Offer = { id: string; name: string; asp: number; gm: number; share: number };
@@ -25,18 +25,8 @@ const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 
 /** ---------- Decimal (2-dp) & Percent (2-dp) Inputs ---------- */
 function DecimalInput({
-  value,
-  onChange,
-  className,
-  min,
-  max,
-}: {
-  value: number;
-  onChange: (v: number) => void;
-  className?: string;
-  min?: number;
-  max?: number;
-}) {
+  value, onChange, className, min, max,
+}: { value: number; onChange: (v: number) => void; className?: string; min?: number; max?: number; }) {
   const to2 = (v: number) => Number.isFinite(v) ? Number(v.toFixed(2)) : 0;
   return (
     <Input
@@ -64,7 +54,7 @@ function DecimalInput({
 function PercentInput({
   value, onChange, className,
 }: { value: number; onChange: (v: number) => void; className?: string }) {
-  const to2 = (v: number) => Number.isFinite(v) ? Number(v.toFixed(4)) : 0; // store with a bit more internal precision
+  const to4 = (v: number) => Number.isFinite(v) ? Number(v.toFixed(4)) : 0; // store precise decimal
   const display = Number.isFinite(value) ? Number((value * 100).toFixed(2)) : 0;
   return (
     <div className="relative">
@@ -79,13 +69,13 @@ function PercentInput({
         onChange={(e) => {
           const raw = parseFloat(e.target.value);
           const dec = (Number.isFinite(raw) ? raw : 0) / 100;
-          onChange(to2(dec));
+          onChange(to4(dec));
         }}
         onBlur={(e) => {
           const raw = parseFloat(e.target.value);
           const dec = (Number.isFinite(raw) ? raw : 0) / 100;
-          e.currentTarget.value = (Math.max(0, Math.min(100, (dec * 100)))).toFixed(2);
-          onChange(to2(dec));
+          e.currentTarget.value = (Math.max(0, Math.min(100, dec * 100))).toFixed(2);
+          onChange(to4(dec));
         }}
       />
       <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs">%</span>
@@ -209,7 +199,7 @@ export default function OpsCockpit() {
   const weightedASP = useMemo(() => sum(offers.map(o => o.asp * o.share)), [offers]);
   const weightedGM  = useMemo(() => sum(offers.map(o => o.gm  * o.share)) / (sum(offers.map(o => o.share)) || 1), [offers]);
 
-  // Conversions
+  // Conversions (from funnel counts)
   const cAwareLead  = useMemo(() => (funnel.awareness ? safe(funnel.lead     / funnel.awareness, 0) : 0), [funnel]);
   const cLeadQual   = useMemo(() => (funnel.lead       ? safe(funnel.qualified/ funnel.lead,       0) : 0), [funnel]);
   const cQualBooked = useMemo(() => (funnel.qualified  ? safe(funnel.booked   / funnel.qualified,  0) : 0), [funnel]);
@@ -305,54 +295,12 @@ export default function OpsCockpit() {
   const removeOffer  = (id: string) => setOffers(prev => prev.filter(o => o.id !== id));
   const setBacklogUnits = (id: string, units: number) => setBacklog(prev => prev.map(b => b.id === id ? { ...b, units } : b));
 
-  // Constraint prescriptions
-  function constraintAdvice(stage: string) {
-    switch (stage) {
-      case "Awareness":
-      case "Lead":
-        return [
-          "Exploit: tighten ICP & forms; shift spend to best Qualified% channels.",
-          "Subordinate: freeze experimental channels until Qualified% >= 30%.",
-          "Elevate: add partner/referral lane; goal +20% qualified leads."
-        ];
-      case "Qualified":
-      case "Booked":
-        return [
-          "Exploit: SDR call blocks; booking script v2.",
-          "Subordinate: cap WIP on outreach sequences; raise show rate.",
-          "Elevate: auto-scheduler + reminders to cut no-shows."
-        ];
-      case "Show":
-      case "Proposal":
-        return [
-          "Exploit: demo narrative & next-step checklist; template proposal.",
-          "Subordinate: limit open proposals per AE (WIP<=8).",
-          "Elevate: proposal ops (0.5 FTE/contractor) + enablement."
-        ];
-      case "CloseWon":
-        return [
-          "Exploit: reference calls; pricing bands to reduce discounting.",
-          "Subordinate: enforce mutual close plans.",
-          "Elevate: add light SE support for complex deals."
-        ];
-      case "Onboarding":
-      case "Aha":
-      case "Delivery":
-        return [
-          "Exploit: pre-boarding & first-value-in-7-days playbook.",
-          "Subordinate: limit concurrent onboardings; protect maker time.",
-          "Elevate: automate provisioning; add contractor buffer if needed."
-        ];
-      case "Renewal/Expansion":
-        return [
-          "Exploit: QBR cadence; value recap emails.",
-          "Subordinate: focus CS bandwidth on risk accounts first.",
-          "Elevate: light-touch adoption tooling; expansion playbooks."
-        ];
-      default:
-        return ["No advice — set a preset or enter data."];
-    }
-  }
+  const updateHC = (id: string, patch: Partial<HeadcountRow>) =>
+    setHeadcount(prev => prev.map(h => h.id === id ? { ...h, ...patch } : h));
+  const addHC = () =>
+    setHeadcount(prev => [...prev, { id: uid(), role: "", fte: 1, focusHrs: 20, util: 0.75, contractors: 0 }]);
+  const removeHC = (id: string) =>
+    setHeadcount(prev => prev.filter(h => h.id !== id));
 
   return (
     <main className="mx-auto max-w-7xl p-6 space-y-6">
@@ -374,7 +322,7 @@ export default function OpsCockpit() {
             <Button onClick={() => applyPreset(presetKey)} className="flex items-center gap-1"><Database className="h-4 w-4"/> Load Preset</Button>
           </div>
         </div>
-        <p className="text-gray-600">Snapshot of constraint, demand gap, sales effectiveness, delivery, and cash — in one place.</p>
+        <p className="text-gray-600">Enter your funnel counts & headcount; everything else updates automatically.</p>
       </motion.div>
 
       {/* ---------- System Summary Grid ---------- */}
@@ -429,7 +377,7 @@ export default function OpsCockpit() {
         </CardContent>
       </Card>
 
-      {/* ---------- Cash & Efficiency Panel ---------- */}
+      {/* ---------- Cash & Util & Lead Gap ---------- */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card>
           <CardHeader><CardTitle className="flex items-center gap-2"><DollarSign className="h-5 w-5"/>Cash & Terms</CardTitle></CardHeader>
@@ -438,7 +386,7 @@ export default function OpsCockpit() {
             <div><Label>DSO (days)</Label><Input type="number" value={cash.dso} onChange={e => setCash({ ...cash, dso: parseInt(e.target.value || "0", 10) })} /></div>
             <div><Label>Payback (days)</Label><Input type="number" value={cash.paybackDays} onChange={e => setCash({ ...cash, paybackDays: parseInt(e.target.value || "0", 10) })} /></div>
             <div><Label>Prepay share</Label><PercentInput value={cash.prepayShare} onChange={(v) => setCash({ ...cash, prepayShare: v })} /></div>
-            <div className="col-span-2 text-xs text-gray-600">If GP30/CAC &lt; 3, prioritize deposits, annual prepay incentives, and faster billing ops.</div>
+            <div className="col-span-2 text-xs text-gray-600">If GP30/CAC &lt; 3, prioritize deposits & faster billing ops.</div>
           </CardContent>
         </Card>
 
@@ -463,7 +411,7 @@ export default function OpsCockpit() {
         <Card>
           <CardHeader><CardTitle className="flex items-center gap-2"><TrendingUp className="h-5 w-5"/>Lead Gap Meter</CardTitle></CardHeader>
           <CardContent className="space-y-2">
-            <div className="text-sm">Required leads/week to saturate sales: <b>{fmt(requiredLeadsPerWeek,0)}</b></div>
+            <div className="text-sm">Required leads/week: <b>{fmt(requiredLeadsPerWeek,0)}</b></div>
             <div className="text-sm">Actual leads/week: <b>{fmt(actualLeadsPerWeek,0)}</b></div>
             <div className="w-full h-3 bg-gray-200 rounded overflow-hidden">
               <div className="h-3 bg-indigo-600" style={{ width: `${Math.min(100, (actualLeadsPerWeek/Math.max(1,requiredLeadsPerWeek))*100)}%` }}></div>
@@ -473,48 +421,9 @@ export default function OpsCockpit() {
                 ? `Short by ~${fmt(leadGapPerWeek,0)} leads/week to hit ceiling.`
                 : "Lead supply sufficient to saturate sales."}
             </div>
-            <div className="text-xs text-gray-600">Shift effort/budget toward channels with higher Qualified% to close the gap faster.</div>
           </CardContent>
         </Card>
       </div>
-
-      {/* ---------- Backlog Health ---------- */}
-      <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5"/>Backlog Health</CardTitle></CardHeader>
-        <CardContent className="space-y-2">
-          {stages.map((s, i) => {
-            const cap = capsPerWeek[i]?.cap ?? 0;
-            const units = backlog[i]?.units ?? 0;
-            const weeksOf = cap > 0 ? units / cap : 0;
-            const wks = safe(weeksOf,0);
-            const pct = Math.min(100, Math.max(0, (wks/2)*100)); // scale 0..2wks
-            return (
-              <div key={s.id} className="grid grid-cols-12 gap-2 items-center">
-                <div className="col-span-3 text-sm">{s.stage}</div>
-                <div className="col-span-7">
-                  <div className="w-full h-2 rounded bg-gray-200 overflow-hidden">
-                    <div className={`h-2 ${wks>1? "bg-red-500":"bg-emerald-500"}`} style={{ width: `${pct}%` }}></div>
-                  </div>
-                </div>
-                <div className="col-span-2 text-sm text-right">{wks.toFixed(2)} wks</div>
-              </div>
-            );
-          })}
-          <div className="text-xs text-gray-600">Aim for &lt;= 1 week of backlog at each stage. If &gt;1, that stage is likely your operational constraint.</div>
-        </CardContent>
-      </Card>
-
-      {/* ---------- Constraint Insight ---------- */}
-      <Card>
-        <CardHeader><CardTitle>Constraint Insight</CardTitle></CardHeader>
-        <CardContent className="space-y-1">
-          <div className="text-sm">Current constraint: <b>{systemDealsPerWeek.stage}</b></div>
-          <ul className="list-disc pl-5 text-sm">
-            {constraintAdvice(systemDealsPerWeek.stage).map((t, i) => <li key={i}>{t}</li>)}
-          </ul>
-          <div className="text-xs text-gray-600">We follow: Exploit → Subordinate → Elevate. Show the math before hiring.</div>
-        </CardContent>
-      </Card>
 
       {/* ---------- Quick Inputs ---------- */}
       <Card>
@@ -545,16 +454,18 @@ export default function OpsCockpit() {
         </CardContent>
       </Card>
 
-      {/* ---------- Offers / Stages / Backlog Inputs ---------- */}
+      {/* ---------- Tabs: Offers / Stages / Backlog / Funnel / Headcount ---------- */}
       <Tabs defaultValue="offers" className="w-full">
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger>Offers</TabsTrigger>
-          <TabsTrigger>Stages</TabsTrigger>
-          <TabsTrigger>Backlog</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-5">
+          <TabsTrigger value="offers">Offers</TabsTrigger>
+          <TabsTrigger value="stages">Stages</TabsTrigger>
+          <TabsTrigger value="backlog">Backlog</TabsTrigger>
+          <TabsTrigger value="funnel">Funnel</TabsTrigger>
+          <TabsTrigger value="headcount">Headcount</TabsTrigger>
         </TabsList>
 
         {/* Offers */}
-        <TabsContent>
+        <TabsContent value="offers">
           <Card>
             <CardHeader><CardTitle className="flex items-center gap-2"><DollarSign className="h-5 w-5"/>Offers</CardTitle></CardHeader>
             <CardContent className="space-y-2">
@@ -580,7 +491,7 @@ export default function OpsCockpit() {
         </TabsContent>
 
         {/* Stages */}
-        <TabsContent>
+        <TabsContent value="stages">
           <Card>
             <CardHeader><CardTitle>Stage Rates & Capacity (per week)</CardTitle></CardHeader>
             <CardContent className="space-y-3">
@@ -605,8 +516,8 @@ export default function OpsCockpit() {
           </Card>
         </TabsContent>
 
-        {/* Backlog (inputs) */}
-        <TabsContent>
+        {/* Backlog */}
+        <TabsContent value="backlog">
           <Card>
             <CardHeader><CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5"/>Stage Backlog</CardTitle></CardHeader>
             <CardContent className="space-y-3">
@@ -626,6 +537,60 @@ export default function OpsCockpit() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {/* Funnel (NEW) */}
+        <TabsContent value="funnel">
+          <Card>
+            <CardHeader><CardTitle className="flex items-center gap-2"><Target className="h-5 w-5"/>Funnel Inputs (counts in this window)</CardTitle></CardHeader>
+            <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {([
+                { key: "awareness", label: "Awareness (impressions/visits)" },
+                { key: "lead",      label: "Leads" },
+                { key: "qualified", label: "Qualified" },
+                { key: "booked",    label: "Meetings Booked" },
+                { key: "show",      label: "Meetings Show" },
+                { key: "proposal",  label: "Proposals" },
+                { key: "closeWon",  label: "Close Won" },
+              ] as {key: keyof FunnelCounts; label: string}[]).map((r) => (
+                <div key={r.key}>
+                  <Label>{r.label}</Label>
+                  <Input
+                    type="number"
+                    value={funnel[r.key]}
+                    onChange={(e) => setFunnel({ ...funnel, [r.key]: parseInt(e.target.value || "0", 10) })}
+                  />
+                </div>
+              ))}
+              <div className="md:col-span-2 text-xs text-gray-600">
+                Tip: enter the last 90 days from your CRM; conversions update above instantly.
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Headcount (NEW) */}
+        <TabsContent value="headcount">
+          <Card>
+            <CardHeader><CardTitle className="flex items-center gap-2"><Users className="h-5 w-5"/>Headcount & Focus Hours</CardTitle></CardHeader>
+            <CardContent className="space-y-2">
+              <div className="flex justify-between items-center">
+                <div className="text-sm text-gray-600">FTE + contractors drive capacity via FocusHrs × Util × StdRate × Yield.</div>
+                <Button size="sm" onClick={addHC}><Plus className="h-4 w-4 mr-1"/>Add Row</Button>
+              </div>
+              {headcount.map(h => (
+                <div key={h.id} className="grid grid-cols-12 gap-2 items-center">
+                  <Input className="col-span-3" placeholder="Role" value={h.role} onChange={e => updateHC(h.id, { role: e.target.value })} />
+                  <Input className="col-span-2" type="number" value={h.fte} onChange={e => updateHC(h.id, { fte: parseInt(e.target.value || "0", 10) })} />
+                  <Input className="col-span-2" type="number" value={h.focusHrs} onChange={e => updateHC(h.id, { focusHrs: parseInt(e.target.value || "0", 10) })} />
+                  <PercentInput className="col-span-2" value={h.util} onChange={(v) => updateHC(h.id, { util: v })} />
+                  <DecimalInput className="col-span-2" value={h.contractors} onChange={(v) => updateHC(h.id, { contractors: v })} />
+                  <Button className="col-span-1" variant="ghost" onClick={() => removeHC(h.id)}><Trash2 className="h-4 w-4"/></Button>
+                </div>
+              ))}
+              <div className="text-xs text-gray-600">Note: capacity by stage comes from the **Stages** tab (owner teams & rates). Use Headcount to sanity-check total FTE & utilization visuals.</div>
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
 
       {/* Debug export toggle */}
@@ -633,7 +598,7 @@ export default function OpsCockpit() {
         <Button variant="secondary" onClick={() => setShowExport(s => !s)} className="flex items-center gap-2">
           <Bug className="h-4 w-4"/>{showExport ? "Hide debug export" : "Show debug export"}
         </Button>
-        <span className="text-xs text-gray-500">Only if you want a JSON snapshot.</span>
+        <span className="text-xs text-gray-500">JSON snapshot for copy/paste.</span>
       </div>
       {showExport && (
         <Card>
@@ -658,7 +623,7 @@ export default function OpsCockpit() {
         </Card>
       )}
 
-      <p className="text-[11px] text-gray-500">Presets are illustrative. Replace with your numbers for real insights.</p>
+      <p className="text-[11px] text-gray-500">Presets are illustrative. Replace with your CRM/BI numbers for real insights.</p>
     </main>
   );
 }
