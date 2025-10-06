@@ -1,15 +1,13 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
-import { Badge } from "../components/ui/badge";
-import { Separator } from "../components/ui/separator";
-import { Plus, Trash2, Gauge, DollarSign, AlertTriangle, SlidersHorizontal, Database, Bug } from "lucide-react";
-import { motion } from "framer-motion";
+import { Plus, Trash2, DollarSign, AlertTriangle, Database, Bug, Target, TrendingUp, Activity } from "lucide-react";
 
 /** ---------- Types ---------- */
 type Offer = { id: string; name: string; asp: number; gm: number; share: number };
@@ -49,82 +47,6 @@ function PercentInput({
   );
 }
 
-/** ---------- Simple, built-in SVG bar chart (no external libs) ---------- */
-function SimpleBarChart({
-  data,
-  height = 240,
-  barColor = "#4f46e5",
-}: {
-  data: { name: string; capacity: number }[];
-  height?: number;
-  barColor?: string;
-}) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  const [w, setW] = useState(0);
-
-  useEffect(() => {
-    if (!ref.current) return;
-    const ro = new ResizeObserver(entries => {
-      const cr = entries[0]?.contentRect;
-      if (cr?.width) setW(cr.width);
-    });
-    ro.observe(ref.current);
-    return () => ro.disconnect();
-  }, []);
-
-  const margin = { top: 20, right: 12, bottom: 40, left: 50 };
-  const width = Math.max(320, w);
-  const innerW = width - margin.left - margin.right;
-  const innerH = height - margin.top - margin.bottom;
-
-  const maxY = Math.max(1, ...data.map(d => d.capacity || 0));
-  const xCount = data.length;
-  const gap = 12;
-  const barW = xCount > 0 ? Math.max(8, (innerW - gap * (xCount - 1)) / xCount) : 0;
-
-  return (
-    <div ref={ref} className="w-full" style={{ height }}>
-      <svg width={width} height={height} role="img" aria-label="Capacity by stage chart">
-        {/* Axes */}
-        <g transform={`translate(${margin.left},${margin.top})`}>
-          {/* Y ticks (4) */}
-          {[0, 0.33, 0.66, 1].map((t, i) => {
-            const y = innerH - t * innerH;
-            const val = Math.round(t * maxY);
-            return (
-              <g key={i} transform={`translate(0,${y})`}>
-                <line x1={0} x2={innerW} stroke="#e5e7eb" strokeDasharray="3 3" />
-                <text x={-10} y={4} textAnchor="end" fontSize="10" fill="#6b7280">{val}</text>
-              </g>
-            );
-          })}
-          {/* Bars */}
-          {data.map((d, i) => {
-            const x = i * (barW + gap);
-            const h = maxY > 0 ? Math.max(0, (d.capacity / maxY) * innerH) : 0;
-            return (
-              <g key={d.name} transform={`translate(${x}, ${innerH - h})`}>
-                <rect width={barW} height={h} rx={8} ry={8} fill={barColor} />
-                {/* value label */}
-                <text x={barW / 2} y={-6} textAnchor="middle" fontSize="10" fill="#111827">
-                  {fmt(d.capacity, 0)}
-                </text>
-                {/* x label */}
-                <text x={barW / 2} y={h + 14} textAnchor="middle" fontSize="10" fill="#6b7280">
-                  {d.name.length > 10 ? d.name.slice(0, 10) + "…" : d.name}
-                </text>
-              </g>
-            );
-          })}
-          {/* Axis lines */}
-          <line x1={0} y1={innerH} x2={innerW} y2={innerH} stroke="#9ca3af" />
-          <line x1={0} y1={0} x2={0} y2={innerH} stroke="#9ca3af" />
-        </g>
-      </svg>
-    </div>
-  );
-}
-
 /** ---------- Defaults ---------- */
 const DEFAULT_STAGES: StageRow[] = [
   { id: "s1",  stage: "Awareness",          unit: "lead",    owner: "Marketing",    fte: 0, focusHrs: 0, util: 0.85, stdRate: 0,    yield: 1 },
@@ -140,7 +62,7 @@ const DEFAULT_STAGES: StageRow[] = [
   { id: "s11", stage: "Renewal/Expansion",  unit: "client",  owner: "CS",           fte: 0, focusHrs: 0, util: 0.85, stdRate: 0,    yield: 1 },
 ];
 
-/** ---------- Presets (illustrative) ---------- */
+/** ---------- Presets (illustrative only) ---------- */
 type Preset = {
   name: string;
   days: number;
@@ -210,9 +132,19 @@ const PRESETS: Record<string, Preset> = {
   }
 };
 
+/** ---------- Mini bar (for funnel %) ---------- */
+function MiniPercentBar({ value, color="#4f46e5" }: { value: number; color?: string }) {
+  const pct = Math.max(0, Math.min(1, value)) * 100;
+  return (
+    <div className="w-full h-2 rounded bg-gray-200 overflow-hidden">
+      <div className="h-full" style={{ width: `${pct}%`, background: color }} />
+    </div>
+  );
+}
+
 /** ---------- Component ---------- */
-export default function RFTEWithPresets_NoLibChart() {
-  // State (start with cargo-like preset)
+export default function OpsCockpit() {
+  // State
   const [presetKey, setPresetKey] = useState<string>("cargo_like");
   const P = PRESETS[presetKey];
 
@@ -225,13 +157,13 @@ export default function RFTEWithPresets_NoLibChart() {
   const [cash, setCash] = useState<Cash>(P.cash);
   const [showExport, setShowExport] = useState<boolean>(false);
 
-  // Derived
+  // Derived basics
   const weeks = useMemo(() => safe(days / 7, 0), [days]);
   const totalFTE = useMemo(() => sum(headcount.map(h => h.fte + h.contractors)), [headcount]);
   const weightedASP = useMemo(() => sum(offers.map(o => o.asp * o.share)), [offers]);
   const weightedGM  = useMemo(() => sum(offers.map(o => o.gm  * o.share)) / (sum(offers.map(o => o.share)) || 1), [offers]);
 
-  // conversions (from funnel)
+  // Conversions
   const cAwareLead  = useMemo(() => (funnel.awareness ? safe(funnel.lead     / funnel.awareness, 0) : 0), [funnel]);
   const cLeadQual   = useMemo(() => (funnel.lead       ? safe(funnel.qualified/ funnel.lead,       0) : 0), [funnel]);
   const cQualBooked = useMemo(() => (funnel.qualified  ? safe(funnel.booked   / funnel.qualified,  0) : 0), [funnel]);
@@ -240,18 +172,17 @@ export default function RFTEWithPresets_NoLibChart() {
   const cPropClose  = useMemo(() => (funnel.proposal   ? safe(funnel.closeWon / funnel.proposal,   0) : 0), [funnel]);
 
   const prodFromAw  = useMemo(
-    () => [cAwareLead, cLeadQual, cQualBooked, cBookedShow, cShowProp, cPropClose]
-          .reduce((a, b) => a * (Number.isFinite(b) && b > 0 ? b : 1), 1),
+    () => [cAwareLead, cLeadQual, cQualBooked, cBookedShow, cShowProp, cPropClose].reduce((a, b) => a * (Number.isFinite(b) && b > 0 ? b : 1), 1),
     [cAwareLead, cLeadQual, cQualBooked, cBookedShow, cShowProp, cPropClose]
   );
 
-  // capacity per stage (units per week)
+  // Capacity per stage (units/week)
   const capsPerWeek = useMemo(
     () => stages.map(s => ({ stage: s.stage, cap: safe(s.fte * s.focusHrs * s.util * s.stdRate * s.yield) })),
     [stages]
   );
 
-  // downstream multiplier to CloseWon from each stage
+  // Downstream multiplier to CloseWon
   const downstreamProduct = useMemo(() => {
     const map: Record<string, number> = {
       Awareness: prodFromAw,
@@ -267,13 +198,11 @@ export default function RFTEWithPresets_NoLibChart() {
     return m;
   }, [stages, prodFromAw, cLeadQual, cQualBooked, cBookedShow, cShowProp, cPropClose]);
 
-  // deals/wk if limited by each stage
+  // Deals/week if limited by each stage (pre-close)
   const dealsPerWeekFromStage = useMemo(
     () => stages.map((s, i) => ({ stage: s.stage, dealsPerWeek: (capsPerWeek[i]?.cap ?? 0) * (downstreamProduct[s.stage] ?? 1) })),
     [stages, capsPerWeek, downstreamProduct]
   );
-
-  // choose constraint over pre-close stages
   const systemDealsPerWeek = useMemo(() => {
     const relevant = dealsPerWeekFromStage.filter(d =>
       ["Awareness","Lead","Qualified","Booked","Show","Proposal","CloseWon"].includes(d.stage)
@@ -288,22 +217,29 @@ export default function RFTEWithPresets_NoLibChart() {
   const gp90d    = useMemo(() => safe(rev90d * weightedGM), [rev90d, weightedGM]);
   const rfteCeil = useMemo(() => totalFTE > 0 ? gp90d / totalFTE : 0, [gp90d, totalFTE]);
 
-  // cash overlay
+  // Cash overlay
   const gpPerDay = useMemo(() => days > 0 ? gp90d / days : 0, [gp90d, days]);
   const gp30     = useMemo(() => gpPerDay * 30, [gpPerDay]);
   const gp30CAC  = useMemo(() => cash.cac > 0 ? gp30 / cash.cac : 0, [gp30, cash.cac]);
   const cashFlag = useMemo(() => gp30CAC > 0 && gp30CAC < 3, [gp30CAC]);
 
-  // backlog weeks
+  // Backlog weeks (per stage)
   const backlogWeeks = useMemo(
     () => stages.map((s, i) => {
       const cap = capsPerWeek[i]?.cap ?? 0;
       const units = backlog[i]?.units ?? 0;
       const weeksOf = cap > 0 ? units / cap : 0;
-      return { stage: s.stage, units, cap, weeksOf };
+      return { id: s.id, stage: s.stage, units, cap, weeksOf };
     }),
     [stages, backlog, capsPerWeek]
   );
+
+  // Lead gap (per week)
+  const downstreamFromLead = useMemo(() => safe(cLeadQual * cQualBooked * cBookedShow * cShowProp * cPropClose, 0), [cLeadQual, cQualBooked, cBookedShow, cShowProp, cPropClose]);
+  const requiredLeadsPerWeek = useMemo(() => downstreamFromLead > 0 ? systemDealsPerWeek.value / downstreamFromLead : 0, [systemDealsPerWeek, downstreamFromLead]);
+  const actualLeadsPerWeek   = useMemo(() => weeks > 0 ? funnel.lead / weeks : 0, [funnel.lead, weeks]);
+  const leadGapPerWeek       = useMemo(() => requiredLeadsPerWeek - actualLeadsPerWeek, [requiredLeadsPerWeek, actualLeadsPerWeek]);
+  const leadGapFlag          = leadGapPerWeek > 5; // arbitrary threshold for warning
 
   // Preset loader
   const applyPreset = (key: string) => {
@@ -326,12 +262,61 @@ export default function RFTEWithPresets_NoLibChart() {
   const removeOffer  = (id: string) => setOffers(prev => prev.filter(o => o.id !== id));
   const setBacklogUnits = (id: string, units: number) => setBacklog(prev => prev.map(b => b.id === id ? { ...b, units } : b));
 
+  // Constraint prescriptions (simple rule-of-thumb text)
+  function constraintAdvice(stage: string) {
+    switch (stage) {
+      case "Awareness":
+      case "Lead":
+        return [
+          "Exploit: tighten ICP & forms; shift spend to best Qualified% channels.",
+          "Subordinate: freeze experimental channels until Qualified% >= 30%.",
+          "Elevate: add partner/referral lane; goal +20% qualified leads."
+        ];
+      case "Qualified":
+      case "Booked":
+        return [
+          "Exploit: SDR call blocks + no multi-tasking; booking script v2.",
+          "Subordinate: cap WIP on outreach sequences; raise show rate.",
+          "Elevate: meeting auto-scheduler + reminders to cut no-shows."
+        ];
+      case "Show":
+      case "Proposal":
+        return [
+          "Exploit: demo narrative & next-step checklist; template proposal.",
+          "Subordinate: limit open proposals per AE (WIP<=8).",
+          "Elevate: add proposal ops (0.5 FTE or contractor) + enablement."
+        ];
+      case "CloseWon":
+        return [
+          "Exploit: reference calls; pricing bands to reduce discounting.",
+          "Subordinate: enforce mutual close plans.",
+          "Elevate: add light SE support for complex deals."
+        ];
+      case "Onboarding":
+      case "Aha":
+      case "Delivery":
+        return [
+          "Exploit: pre-boarding & first-value-in-7-days playbook.",
+          "Subordinate: limit concurrent onboardings; protect maker time.",
+          "Elevate: automation for provisioning & templates; consider contractor buffer."
+        ];
+      case "Renewal/Expansion":
+        return [
+          "Exploit: QBR cadence; value recap emails.",
+          "Subordinate: focus CS bandwidth on risk accounts first.",
+          "Elevate: light-touch adoption tooling; expansion playbooks."
+        ];
+      default:
+        return ["No advice — set a preset or enter data."];
+    }
+  }
+
   return (
     <main className="mx-auto max-w-7xl p-6 space-y-6">
       {/* Header */}
-      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
         <div className="flex items-center justify-between flex-wrap gap-3">
-          <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">R/FTE Bottleneck Mapper — Presets</h1>
+          <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">R/FTE Ops Cockpit (Chief of Staff)</h1>
           <div className="flex items-center gap-2">
             <select
               value={presetKey}
@@ -343,50 +328,151 @@ export default function RFTEWithPresets_NoLibChart() {
                 <option key={k} value={k}>{p.name}</option>
               ))}
             </select>
-            <Button onClick={() => applyPreset(presetKey)} className="flex items-center gap-1">
-              <Database className="h-4 w-4"/> Load Preset
-            </Button>
+            <Button onClick={() => applyPreset(presetKey)} className="flex items-center gap-1"><Database className="h-4 w-4"/> Load Preset</Button>
           </div>
         </div>
-        <p className="text-gray-600">Use a preset to see live figures, then tweak quickly in the panels below.</p>
+        <p className="text-gray-600">Snapshot of constraint, demand gap, sales effectiveness, delivery, and cash — in one place.</p>
       </motion.div>
 
-      {/* Executive tiles */}
+      {/* ---------- System Summary Grid ---------- */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card><CardContent className="p-4">
           <div className="text-xs text-gray-500">Throughput ceiling</div>
           <div className="text-2xl font-semibold">{fmt(systemDealsPerWeek.value,2)} /wk</div>
-          <div className="text-xs">Bottleneck: <b>{systemDealsPerWeek.stage}</b></div>
+          <div className="text-xs">Constraint: <b>{systemDealsPerWeek.stage}</b></div>
         </CardContent></Card>
+
         <Card><CardContent className="p-4">
-          <div className="text-xs text-gray-500">GP (90d)</div>
-          <div className="text-2xl font-semibold">${fmt(gp90d,0)}</div>
-          <div className="text-xs">Rev mix ASP: ${fmt(weightedASP,0)}</div>
-        </CardContent></Card>
-        <Card><CardContent className="p-4">
-          <div className="text-xs text-gray-500">R/FTE ceiling</div>
+          <div className="text-xs text-gray-500">R/FTE ceiling (90d GP / FTE)</div>
           <div className="text-2xl font-semibold">${fmt(rfteCeil,0)}</div>
-          <div className="text-xs">Total FTE: {fmt(totalFTE,2)}</div>
+          <div className="text-xs">GP 90d: ${fmt(gp90d,0)} | FTE: {fmt(totalFTE,2)}</div>
         </CardContent></Card>
+
         <Card><CardContent className={`p-4 ${cashFlag ? "bg-red-50" : ""}`}>
           <div className="text-xs text-gray-500">Cash signal (GP30/CAC)</div>
           <div className={`text-2xl font-semibold ${cashFlag ? "text-red-600" : "text-emerald-600"}`}>{fmt(gp30CAC,2)}</div>
-          <div className="text-xs">{cashFlag ? "Treat cash as constraint" : "Cash ok (≥ 3 preferred)"}</div>
+          <div className="text-xs">{cashFlag ? "Treat cash as constraint" : "Cash OK (>= 3 preferred)"}</div>
+        </CardContent></Card>
+
+        <Card><CardContent className={`p-4 ${leadGapFlag ? "bg-amber-50" : ""}`}>
+          <div className="text-xs text-gray-500">Lead gap (per week)</div>
+          <div className={`text-2xl font-semibold ${leadGapFlag ? "text-amber-700" : ""}`}>
+            {leadGapPerWeek > 0 ? `-${fmt(leadGapPerWeek,0)}` : `+${fmt(Math.abs(leadGapPerWeek),0)}`}
+          </div>
+          <div className="text-xs">Req: {fmt(requiredLeadsPerWeek,0)} | Actual: {fmt(actualLeadsPerWeek,0)}</div>
         </CardContent></Card>
       </div>
 
-      {/* Capacity by Stage (Built-in chart) */}
+      {/* ---------- Conversion Funnel Mini ---------- */}
       <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><Gauge className="h-5 w-5"/>Capacity by Stage</CardTitle></CardHeader>
-        <CardContent>
-          <SimpleBarChart data={stages.map((s, i) => ({ name: s.stage, capacity: capsPerWeek[i]?.cap ?? 0 }))} />
-          <div className="mt-2 text-xs text-gray-500">Capacity/wk = FTE × FocusHrs × Util × StdRate × Yield</div>
+        <CardHeader><CardTitle className="flex items-center gap-2"><Target className="h-5 w-5"/>Conversion Funnel</CardTitle></CardHeader>
+        <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {[
+            { label: "Awareness → Lead", v: cAwareLead },
+            { label: "Lead → Qualified", v: cLeadQual },
+            { label: "Qualified → Booked", v: cQualBooked },
+            { label: "Booked → Show", v: cBookedShow },
+            { label: "Show → Proposal", v: cShowProp },
+            { label: "Proposal → Close", v: cPropClose },
+          ].map((row) => (
+            <div key={row.label} className="space-y-1">
+              <div className="flex items-center justify-between text-sm">
+                <span>{row.label}</span>
+                <span className="text-gray-600">{(safe(row.v,0)*100).toFixed(2)}%</span>
+              </div>
+              <MiniPercentBar value={safe(row.v,0)} />
+            </div>
+          ))}
         </CardContent>
       </Card>
 
-      {/* Quick Inputs */}
+      {/* ---------- Cash & Efficiency Panel ---------- */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card>
+          <CardHeader><CardTitle className="flex items-center gap-2"><DollarSign className="h-5 w-5"/>Cash & Terms</CardTitle></CardHeader>
+          <CardContent className="grid grid-cols-2 gap-3">
+            <div><Label>CAC</Label><Input type="number" value={cash.cac} onChange={e => setCash({ ...cash, cac: parseFloat(e.target.value) || 0 })} /></div>
+            <div><Label>DSO (days)</Label><Input type="number" value={cash.dso} onChange={e => setCash({ ...cash, dso: parseFloat(e.target.value) || 0 })} /></div>
+            <div><Label>Payback (days)</Label><Input type="number" value={cash.paybackDays} onChange={e => setCash({ ...cash, paybackDays: parseFloat(e.target.value) || 0 })} /></div>
+            <div><Label>Prepay share</Label><PercentInput value={cash.prepayShare} onChange={(v) => setCash({ ...cash, prepayShare: v })} /></div>
+            <div className="col-span-2 text-xs text-gray-600">If GP30/CAC &lt; 3, prioritize deposits, annual prepay incentives, and faster billing ops.</div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader><CardTitle className="flex items-center gap-2"><Activity className="h-5 w-5"/>Utilization (by team)</CardTitle></CardHeader>
+          <CardContent className="space-y-2">
+            {headcount.map(h => {
+              const pct = Math.round((safe(h.util,0))*100);
+              return (
+                <div key={h.id}>
+                  <div className="flex justify-between text-sm"><span>{h.role}</span><span>{pct.toFixed(0)}%</span></div>
+                  <div className="w-full h-2 bg-gray-200 rounded overflow-hidden">
+                    <div className={`h-2 ${pct>85? "bg-red-500":"bg-emerald-500"}`} style={{ width: `${Math.min(100, Math.max(0,pct))}%` }}></div>
+                  </div>
+                </div>
+              );
+            })}
+            <div className="text-xs text-gray-600">Target utilization 65–85% to avoid quality drops and burnout.</div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader><CardTitle className="flex items-center gap-2"><TrendingUp className="h-5 w-5"/>Lead Gap Meter</CardTitle></CardHeader>
+          <CardContent className="space-y-2">
+            <div className="text-sm">Required leads/week to saturate sales: <b>{fmt(requiredLeadsPerWeek,0)}</b></div>
+            <div className="text-sm">Actual leads/week: <b>{fmt(actualLeadsPerWeek,0)}</b></div>
+            <div className="w-full h-3 bg-gray-200 rounded overflow-hidden">
+              <div className="h-3 bg-indigo-600" style={{ width: `${Math.min(100, (actualLeadsPerWeek/Math.max(1,requiredLeadsPerWeek))*100)}%` }}></div>
+            </div>
+            <div className={`text-sm ${leadGapFlag ? "text-amber-700" : "text-emerald-700"}`}>
+              {leadGapPerWeek > 0
+                ? `Short by ~${fmt(leadGapPerWeek,0)} leads/week to hit ceiling.`
+                : "Lead supply sufficient to saturate sales."}
+            </div>
+            <div className="text-xs text-gray-600">Shift effort/budget toward channels with higher Qualified% to close the gap faster.</div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* ---------- Backlog Health (heatmap) ---------- */}
       <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><SlidersHorizontal className="h-5 w-5"/>Quick Inputs</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5"/>Backlog Health</CardTitle></CardHeader>
+        <CardContent className="space-y-2">
+          {backlogWeeks.map(row => {
+            const wks = safe(row.weeksOf,0);
+            const pct = Math.min(100, Math.max(0, (wks/2)*100)); // scale 0..2wks
+            return (
+              <div key={row.id} className="grid grid-cols-12 gap-2 items-center">
+                <div className="col-span-3 text-sm">{row.stage}</div>
+                <div className="col-span-7">
+                  <div className="w-full h-2 rounded bg-gray-200 overflow-hidden">
+                    <div className={`h-2 ${wks>1? "bg-red-500":"bg-emerald-500"}`} style={{ width: `${pct}%` }}></div>
+                  </div>
+                </div>
+                <div className="col-span-2 text-sm text-right">{wks.toFixed(2)} wks</div>
+              </div>
+            );
+          })}
+          <div className="text-xs text-gray-600">Aim for &lt;= 1 week of backlog at each stage. If &gt;1, that stage is likely your operational constraint.</div>
+        </CardContent>
+      </Card>
+
+      {/* ---------- Constraint Insight ---------- */}
+      <Card>
+        <CardHeader><CardTitle>Constraint Insight</CardTitle></CardHeader>
+        <CardContent className="space-y-1">
+          <div className="text-sm">Current constraint: <b>{systemDealsPerWeek.stage}</b></div>
+          <ul className="list-disc pl-5 text-sm">
+            {constraintAdvice(systemDealsPerWeek.stage).map((t, i) => <li key={i}>{t}</li>)}
+          </ul>
+          <div className="text-xs text-gray-600">We follow: Exploit → Subordinate → Elevate. Show the math before hiring.</div>
+        </CardContent>
+      </Card>
+
+      {/* ---------- Quick Inputs ---------- */}
+      <Card>
+        <CardHeader><CardTitle>Quick Inputs</CardTitle></CardHeader>
         <CardContent className="space-y-2">
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-3">
             <div className="rounded-xl border p-3 bg-white">
@@ -410,17 +496,15 @@ export default function RFTEWithPresets_NoLibChart() {
               <PercentInput value={cash.prepayShare} onChange={(v) => setCash({ ...cash, prepayShare: v })} />
             </div>
           </div>
-          <p className="text-xs text-gray-500">Percent fields show two decimals but store clean decimals (0..1) under the hood.</p>
         </CardContent>
       </Card>
 
-      {/* Tabs: Offers / Stages / Backlog / Cash */}
+      {/* ---------- Offers / Stages / Backlog Inputs ---------- */}
       <Tabs defaultValue="offers" className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger>Offers</TabsTrigger>
           <TabsTrigger>Stages</TabsTrigger>
           <TabsTrigger>Backlog</TabsTrigger>
-          <TabsTrigger>Cash</TabsTrigger>
         </TabsList>
 
         {/* Offers */}
@@ -473,45 +557,25 @@ export default function RFTEWithPresets_NoLibChart() {
           </Card>
         </TabsContent>
 
-        {/* Backlog */}
+        {/* Backlog (inputs) */}
         <TabsContent>
           <Card>
-            <CardHeader><CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5"/>Backlog Health</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5"/>Stage Backlog</CardTitle></CardHeader>
             <CardContent className="space-y-3">
               {stages.map((s, i) => (
                 <div key={s.id} className="grid grid-cols-12 gap-2 items-center">
                   <div className="col-span-3 font-medium">{s.stage}</div>
                   <Input className="col-span-3" type="number" value={backlog[i]?.units ?? 0} onChange={e => setBacklogUnits(s.id, parseFloat(e.target.value) || 0)} />
                   <div className="col-span-3 text-sm">Weekly cap: <b>{fmt(capsPerWeek[i]?.cap ?? 0,2)}</b></div>
-                  <div className="col-span-3 text-sm">
-                    Weeks of backlog: <b>{fmt((backlogWeeks[i]?.weeksOf ?? 0),2)}</b>{" "}
-                    {(backlogWeeks[i]?.weeksOf ?? 0) > 1 ? (
-                      <span className="text-red-600">({"\\u003e"}1 week)</span>
-                    ) : (
-                      <span className="text-emerald-600">({"\\u2264"}1 week)</span>
-                    )}
-                  </div>
+                  <div className="col-span-3 text-sm">Weeks: <b>{fmt((backlogWeeks[i]?.weeksOf ?? 0),2)}</b> { (backlogWeeks[i]?.weeksOf ?? 0) > 1 ? "(>1 week)" : "(<=1 week)" }</div>
                 </div>
               ))}
             </CardContent>
           </Card>
         </TabsContent>
-
-        {/* Cash */}
-        <TabsContent>
-          <Card>
-            <CardHeader><CardTitle>Cash Terms</CardTitle></CardHeader>
-            <CardContent className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div><Label>CAC</Label><Input type="number" value={cash.cac} onChange={e => setCash({ ...cash, cac: parseFloat(e.target.value) || 0 })} /></div>
-              <div><Label>DSO (days)</Label><Input type="number" value={cash.dso} onChange={e => setCash({ ...cash, dso: parseFloat(e.target.value) || 0 })} /></div>
-              <div><Label>Payback (days)</Label><Input type="number" value={cash.paybackDays} onChange={e => setCash({ ...cash, paybackDays: parseFloat(e.target.value) || 0 })} /></div>
-              <div><Label>Prepay share</Label><PercentInput value={cash.prepayShare} onChange={(v) => setCash({ ...cash, prepayShare: v })} /></div>
-            </CardContent>
-          </Card>
-        </TabsContent>
       </Tabs>
 
-      {/* Debug export toggle (hidden by default) */}
+      {/* Debug export toggle */}
       <div className="flex items-center gap-2">
         <Button variant="secondary" onClick={() => setShowExport(s => !s)} className="flex items-center gap-2">
           <Bug className="h-4 w-4"/>{showExport ? "Hide debug export" : "Show debug export"}
@@ -533,6 +597,7 @@ export default function RFTEWithPresets_NoLibChart() {
                   dealsPerWeek: systemDealsPerWeek.value,
                   rev90d, gp90d, r_fte_ceiling: rfteCeil,
                   gp30_over_cac: gp30CAC, cash_flag: cashFlag,
+                  lead_gap_per_week: leadGapPerWeek,
                 }
               }, null, 2)}
             </pre>
@@ -540,7 +605,7 @@ export default function RFTEWithPresets_NoLibChart() {
         </Card>
       )}
 
-      <p className="text-[11px] text-gray-500">Presets are illustrative only. Replace with your numbers for real insights.</p>
+      <p className="text-[11px] text-gray-500">Presets are illustrative. Replace with your numbers for real insights.</p>
     </main>
   );
 }
