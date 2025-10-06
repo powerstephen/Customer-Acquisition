@@ -16,7 +16,6 @@ import {
   Activity,
   ArrowUpRight,
   ArrowDownRight,
-  Users,
   BarChart3,
   Gauge,
 } from "lucide-react";
@@ -339,9 +338,9 @@ export default function ChiefOfStaffCockpit() {
       ];
     }
     return [
-        "Exploit: improve ICP filtering & landing pages to raise Lead→Qualified.",
-        "Subordinate: SDRs prioritize high-fit accounts; reduce no-shows with tighter reminders/SMS.",
-        "Elevate: partnerships/referrals; goal +15% Qualified volume at same CAC.",
+      "Exploit: improve ICP filtering & landing pages to raise Lead→Qualified.",
+      "Subordinate: SDRs prioritize high-fit accounts; reduce no-shows with tighter reminders/SMS.",
+      "Elevate: partnerships/referrals; goal +15% Qualified volume at same CAC.",
     ];
   })();
 
@@ -357,11 +356,12 @@ export default function ChiefOfStaffCockpit() {
             </Button>
           </div>
         </div>
-        <p className="text-gray-600">8 widgets + full funnel vs required to saturate Delivery. Edit Current vs Prev 90d below.</p>
+        <p className="text-gray-600">Two rows of 4 widgets + full funnel vs required to saturate Delivery. Edit Current vs Prev 90d below.</p>
       </motion.div>
 
-      {/* -------- Top Widgets (8) -------- */}
-      <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-8 gap-4">
+      {/* -------- Top Widgets (8 across 2 rows) -------- */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Row 1 */}
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">Constraint</CardTitle></CardHeader>
           <CardContent className="pt-0">
@@ -402,6 +402,7 @@ export default function ChiefOfStaffCockpit() {
           </CardContent>
         </Card>
 
+        {/* Row 2 */}
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">Qualified Rate (MQL→SQL)</CardTitle></CardHeader>
           <CardContent className="pt-0">
@@ -435,28 +436,15 @@ export default function ChiefOfStaffCockpit() {
           </CardContent>
         </Card>
 
+        {/* NEW: Lead Gap widget to keep 8 total */}
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">Onboardings Capacity</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">Lead Gap (per week)</CardTitle></CardHeader>
           <CardContent className="pt-0">
-            <div className="flex items-center justify-between">
-              <div className="text-lg font-semibold">{fmtNum(curr.onboardingsPerWeek,2)}/wk</div>
-              <Gauge className="h-4 w-4 text-indigo-600" />
+            <div className={`text-lg font-semibold ${C.leadGapPerWeek > 0 ? "text-amber-700" : "text-emerald-700"}`}>
+              {C.leadGapPerWeek > 0 ? `-${fmtNum(C.leadGapPerWeek,1)} /wk` : `+${fmtNum(Math.abs(C.leadGapPerWeek),1)} /wk`}
             </div>
-            <div className="text-[11px] text-gray-600">Avg Days: {fmtNum(curr.onboardingDaysAvg,0)}</div>
-            <div className="text-[11px] mt-1">Δ vs prev: <DeltaTag value={dOnb} /></div>
-          </CardContent>
-        </Card>
-
-        <Card className="lg:col-span-2 md:col-span-2">
-          <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">Active Network</CardTitle></CardHeader>
-          <CardContent className="pt-0">
-            <div className="flex items-center justify-between text-sm">
-              <div className="flex items-center gap-2"><Users className="h-4 w-4"/><span>Forwarders</span></div>
-              <div className="font-medium">{fmtNum(curr.activeForwarders)}</div>
-            </div>
-            <div className="mt-2 flex items-center justify-between text-sm">
-              <div className="flex items-center gap-2"><Activity className="h-4 w-4"/><span>Airlines</span></div>
-              <div className="font-medium">{fmtNum(curr.activeAirlines)}</div>
+            <div className="text-[11px] text-gray-600">
+              Req {fmtNum(C.reqLeadsPerWeek,1)} vs Actual {fmtNum(C.leadsPerWeek,1)}
             </div>
           </CardContent>
         </Card>
