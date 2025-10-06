@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
@@ -23,26 +23,82 @@ const safe = (n: number, alt = 0) => (Number.isFinite(n) && !Number.isNaN(n) ? n
 const sum = (arr: number[]) => arr.reduce((a, b) => a + safe(b), 0);
 const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 
-/** ---------- Percent input (shows XX.XX%, stores 0..1) ---------- */
+/** ---------- Decimal (2-dp) & Percent (2-dp) Inputs ---------- */
+function DecimalInput({
+  value,
+  onChange,
+  className,
+  min,
+  max,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  className?: string;
+  min?: number;
+  max?: number;
+}) {
+  const to2 = (v: number) => Number.isFinite(v) ? Number(v.toFixed(2)) : 0;
+  return (
+    <Input
+      type="number"
+      step={0.01}
+      inputMode="decimal"
+      className={className}
+      min={min}
+      max={max}
+      value={to2(value)}
+      onChange={(e) => {
+        const raw = parseFloat(e.target.value);
+        onChange(Number.isFinite(raw) ? raw : 0);
+      }}
+      onBlur={(e) => {
+        const raw = parseFloat(e.target.value);
+        const n = Number.isFinite(raw) ? raw : 0;
+        e.currentTarget.value = to2(n).toString();
+        onChange(to2(n));
+      }}
+    />
+  );
+}
+
 function PercentInput({
-  value, onChange, step = 0.01, min = 0, max = 100, className,
-}: { value: number; onChange: (v: number) => void; step?: number; min?: number; max?: number; className?: string }) {
+  value, onChange, className,
+}: { value: number; onChange: (v: number) => void; className?: string }) {
+  const to2 = (v: number) => Number.isFinite(v) ? Number(v.toFixed(4)) : 0; // store with a bit more internal precision
   const display = Number.isFinite(value) ? Number((value * 100).toFixed(2)) : 0;
   return (
     <div className="relative">
       <Input
         type="number"
-        step={step}
-        min={min}
-        max={max}
+        step={0.01}
+        min={0}
+        max={100}
+        inputMode="decimal"
         className={className}
         value={display}
         onChange={(e) => {
           const raw = parseFloat(e.target.value);
-          onChange((Number.isFinite(raw) ? raw : 0) / 100);
+          const dec = (Number.isFinite(raw) ? raw : 0) / 100;
+          onChange(to2(dec));
+        }}
+        onBlur={(e) => {
+          const raw = parseFloat(e.target.value);
+          const dec = (Number.isFinite(raw) ? raw : 0) / 100;
+          e.currentTarget.value = (Math.max(0, Math.min(100, (dec * 100)))).toFixed(2);
+          onChange(to2(dec));
         }}
       />
       <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs">%</span>
+    </div>
+  );
+}
+
+/** ---------- Mini bar (for funnel %) ---------- */
+function MiniPercentBar({ value, color="#4f46e5" }: { value: number; color?: string }) {
+  const pct = Math.max(0, Math.min(1, value)) * 100;
+  return (
+    <div className="w-full h-2 rounded bg-gray-200 overflow-hidden">
+      <div className="h-full" style={{ width: `${pct}%`, background: color }} />
     </div>
   );
 }
@@ -132,16 +188,6 @@ const PRESETS: Record<string, Preset> = {
   }
 };
 
-/** ---------- Mini bar (for funnel %) ---------- */
-function MiniPercentBar({ value, color="#4f46e5" }: { value: number; color?: string }) {
-  const pct = Math.max(0, Math.min(1, value)) * 100;
-  return (
-    <div className="w-full h-2 rounded bg-gray-200 overflow-hidden">
-      <div className="h-full" style={{ width: `${pct}%`, background: color }} />
-    </div>
-  );
-}
-
 /** ---------- Component ---------- */
 export default function OpsCockpit() {
   // State
@@ -176,13 +222,11 @@ export default function OpsCockpit() {
     [cAwareLead, cLeadQual, cQualBooked, cBookedShow, cShowProp, cPropClose]
   );
 
-  // Capacity per stage (units/week)
+  // Capacity / downstream
   const capsPerWeek = useMemo(
     () => stages.map(s => ({ stage: s.stage, cap: safe(s.fte * s.focusHrs * s.util * s.stdRate * s.yield) })),
     [stages]
   );
-
-  // Downstream multiplier to CloseWon
   const downstreamProduct = useMemo(() => {
     const map: Record<string, number> = {
       Awareness: prodFromAw,
@@ -198,7 +242,6 @@ export default function OpsCockpit() {
     return m;
   }, [stages, prodFromAw, cLeadQual, cQualBooked, cBookedShow, cShowProp, cPropClose]);
 
-  // Deals/week if limited by each stage (pre-close)
   const dealsPerWeekFromStage = useMemo(
     () => stages.map((s, i) => ({ stage: s.stage, dealsPerWeek: (capsPerWeek[i]?.cap ?? 0) * (downstreamProduct[s.stage] ?? 1) })),
     [stages, capsPerWeek, downstreamProduct]
@@ -239,7 +282,7 @@ export default function OpsCockpit() {
   const requiredLeadsPerWeek = useMemo(() => downstreamFromLead > 0 ? systemDealsPerWeek.value / downstreamFromLead : 0, [systemDealsPerWeek, downstreamFromLead]);
   const actualLeadsPerWeek   = useMemo(() => weeks > 0 ? funnel.lead / weeks : 0, [funnel.lead, weeks]);
   const leadGapPerWeek       = useMemo(() => requiredLeadsPerWeek - actualLeadsPerWeek, [requiredLeadsPerWeek, actualLeadsPerWeek]);
-  const leadGapFlag          = leadGapPerWeek > 5; // arbitrary threshold for warning
+  const leadGapFlag          = leadGapPerWeek > 5;
 
   // Preset loader
   const applyPreset = (key: string) => {
@@ -262,7 +305,7 @@ export default function OpsCockpit() {
   const removeOffer  = (id: string) => setOffers(prev => prev.filter(o => o.id !== id));
   const setBacklogUnits = (id: string, units: number) => setBacklog(prev => prev.map(b => b.id === id ? { ...b, units } : b));
 
-  // Constraint prescriptions (simple rule-of-thumb text)
+  // Constraint prescriptions
   function constraintAdvice(stage: string) {
     switch (stage) {
       case "Awareness":
@@ -275,16 +318,16 @@ export default function OpsCockpit() {
       case "Qualified":
       case "Booked":
         return [
-          "Exploit: SDR call blocks + no multi-tasking; booking script v2.",
+          "Exploit: SDR call blocks; booking script v2.",
           "Subordinate: cap WIP on outreach sequences; raise show rate.",
-          "Elevate: meeting auto-scheduler + reminders to cut no-shows."
+          "Elevate: auto-scheduler + reminders to cut no-shows."
         ];
       case "Show":
       case "Proposal":
         return [
           "Exploit: demo narrative & next-step checklist; template proposal.",
           "Subordinate: limit open proposals per AE (WIP<=8).",
-          "Elevate: add proposal ops (0.5 FTE or contractor) + enablement."
+          "Elevate: proposal ops (0.5 FTE/contractor) + enablement."
         ];
       case "CloseWon":
         return [
@@ -298,7 +341,7 @@ export default function OpsCockpit() {
         return [
           "Exploit: pre-boarding & first-value-in-7-days playbook.",
           "Subordinate: limit concurrent onboardings; protect maker time.",
-          "Elevate: automation for provisioning & templates; consider contractor buffer."
+          "Elevate: automate provisioning; add contractor buffer if needed."
         ];
       case "Renewal/Expansion":
         return [
@@ -391,9 +434,9 @@ export default function OpsCockpit() {
         <Card>
           <CardHeader><CardTitle className="flex items-center gap-2"><DollarSign className="h-5 w-5"/>Cash & Terms</CardTitle></CardHeader>
           <CardContent className="grid grid-cols-2 gap-3">
-            <div><Label>CAC</Label><Input type="number" value={cash.cac} onChange={e => setCash({ ...cash, cac: parseFloat(e.target.value) || 0 })} /></div>
-            <div><Label>DSO (days)</Label><Input type="number" value={cash.dso} onChange={e => setCash({ ...cash, dso: parseFloat(e.target.value) || 0 })} /></div>
-            <div><Label>Payback (days)</Label><Input type="number" value={cash.paybackDays} onChange={e => setCash({ ...cash, paybackDays: parseFloat(e.target.value) || 0 })} /></div>
+            <div><Label>CAC</Label><DecimalInput value={cash.cac} onChange={(v) => setCash({ ...cash, cac: v })} /></div>
+            <div><Label>DSO (days)</Label><Input type="number" value={cash.dso} onChange={e => setCash({ ...cash, dso: parseInt(e.target.value || "0", 10) })} /></div>
+            <div><Label>Payback (days)</Label><Input type="number" value={cash.paybackDays} onChange={e => setCash({ ...cash, paybackDays: parseInt(e.target.value || "0", 10) })} /></div>
             <div><Label>Prepay share</Label><PercentInput value={cash.prepayShare} onChange={(v) => setCash({ ...cash, prepayShare: v })} /></div>
             <div className="col-span-2 text-xs text-gray-600">If GP30/CAC &lt; 3, prioritize deposits, annual prepay incentives, and faster billing ops.</div>
           </CardContent>
@@ -435,16 +478,19 @@ export default function OpsCockpit() {
         </Card>
       </div>
 
-      {/* ---------- Backlog Health (heatmap) ---------- */}
+      {/* ---------- Backlog Health ---------- */}
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5"/>Backlog Health</CardTitle></CardHeader>
         <CardContent className="space-y-2">
-          {backlogWeeks.map(row => {
-            const wks = safe(row.weeksOf,0);
+          {stages.map((s, i) => {
+            const cap = capsPerWeek[i]?.cap ?? 0;
+            const units = backlog[i]?.units ?? 0;
+            const weeksOf = cap > 0 ? units / cap : 0;
+            const wks = safe(weeksOf,0);
             const pct = Math.min(100, Math.max(0, (wks/2)*100)); // scale 0..2wks
             return (
-              <div key={row.id} className="grid grid-cols-12 gap-2 items-center">
-                <div className="col-span-3 text-sm">{row.stage}</div>
+              <div key={s.id} className="grid grid-cols-12 gap-2 items-center">
+                <div className="col-span-3 text-sm">{s.stage}</div>
                 <div className="col-span-7">
                   <div className="w-full h-2 rounded bg-gray-200 overflow-hidden">
                     <div className={`h-2 ${wks>1? "bg-red-500":"bg-emerald-500"}`} style={{ width: `${pct}%` }}></div>
@@ -477,19 +523,19 @@ export default function OpsCockpit() {
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-3">
             <div className="rounded-xl border p-3 bg-white">
               <div className="text-xs text-gray-500 mb-1">Window (days)</div>
-              <Input type="number" value={days} onChange={(e) => setDays(parseFloat(e.target.value) || 0)} />
+              <Input type="number" value={days} onChange={(e) => setDays(parseInt(e.target.value || "0", 10))} />
             </div>
             <div className="rounded-xl border p-3 bg-white">
               <div className="text-xs text-gray-500 mb-1">CAC</div>
-              <Input type="number" value={cash.cac} onChange={(e) => setCash({ ...cash, cac: parseFloat(e.target.value) || 0 })} />
+              <DecimalInput value={cash.cac} onChange={(v) => setCash({ ...cash, cac: v })} />
             </div>
             <div className="rounded-xl border p-3 bg-white">
               <div className="text-xs text-gray-500 mb-1">DSO (days)</div>
-              <Input type="number" value={cash.dso} onChange={(e) => setCash({ ...cash, dso: parseFloat(e.target.value) || 0 })} />
+              <Input type="number" value={cash.dso} onChange={(e) => setCash({ ...cash, dso: parseInt(e.target.value || "0", 10) })} />
             </div>
             <div className="rounded-xl border p-3 bg-white">
               <div className="text-xs text-gray-500 mb-1">Payback (days)</div>
-              <Input type="number" value={cash.paybackDays} onChange={(e) => setCash({ ...cash, paybackDays: parseFloat(e.target.value) || 0 })} />
+              <Input type="number" value={cash.paybackDays} onChange={(e) => setCash({ ...cash, paybackDays: parseInt(e.target.value || "0", 10) })} />
             </div>
             <div className="rounded-xl border p-3 bg-white">
               <div className="text-xs text-gray-500 mb-1">Prepay share</div>
@@ -519,7 +565,7 @@ export default function OpsCockpit() {
               {offers.map(o => (
                 <div key={o.id} className="grid grid-cols-12 gap-2 items-center">
                   <Input className="col-span-4" placeholder="Name" value={o.name} onChange={e => updateOffer(o.id, { name: e.target.value })}/>
-                  <Input className="col-span-2" type="number" placeholder="ASP" value={o.asp} onChange={e => updateOffer(o.id, { asp: parseFloat(e.target.value) || 0 })}/>
+                  <DecimalInput className="col-span-2" value={o.asp} onChange={(v) => updateOffer(o.id, { asp: v })} />
                   <PercentInput className="col-span-2" value={o.gm} onChange={(v) => updateOffer(o.id, { gm: v })} />
                   <PercentInput className="col-span-2" value={o.share} onChange={(v) => updateOffer(o.id, { share: v })} />
                   <Button className="col-span-2" variant="ghost" onClick={() => removeOffer(o.id)}><Trash2 className="h-4 w-4"/></Button>
@@ -543,13 +589,15 @@ export default function OpsCockpit() {
                   <div className="col-span-2 font-medium">{s.stage}</div>
                   <Input className="col-span-1" value={s.unit} onChange={e => updateStage(s.id, { unit: e.target.value })} />
                   <Input className="col-span-2" value={s.owner} onChange={e => updateStage(s.id, { owner: e.target.value })} />
-                  <Input className="col-span-1" type="number" value={s.fte} onChange={e => updateStage(s.id, { fte: parseFloat(e.target.value) || 0 })} />
-                  <Input className="col-span-1" type="number" value={s.focusHrs} onChange={e => updateStage(s.id, { focusHrs: parseFloat(e.target.value) || 0 })} />
+                  <Input className="col-span-1" type="number" value={s.fte} onChange={e => updateStage(s.id, { fte: parseInt(e.target.value || "0", 10) })} />
+                  <Input className="col-span-1" type="number" value={s.focusHrs} onChange={e => updateStage(s.id, { focusHrs: parseInt(e.target.value || "0", 10) })} />
                   <PercentInput className="col-span-1" value={s.util} onChange={(v) => updateStage(s.id, { util: v })} />
-                  <Input className="col-span-1" type="number" value={s.stdRate} onChange={e => updateStage(s.id, { stdRate: parseFloat(e.target.value) || 0 })} />
+                  <DecimalInput className="col-span-1" value={s.stdRate} onChange={(v) => updateStage(s.id, { stdRate: v })} />
                   <PercentInput className="col-span-1" value={s.yield} onChange={(v) => updateStage(s.id, { yield: v })} />
                   <div className="col-span-2 text-right text-sm">
-                    <div className="rounded bg-gray-100 px-2 py-1">cap: <b>{fmt(capsPerWeek[i]?.cap ?? 0, 2)}</b></div>
+                    <div className="rounded bg-gray-100 px-2 py-1">
+                      cap: <b>{fmt(safe(s.fte,0) * safe(s.focusHrs,0) * safe(s.util,0) * safe(s.stdRate,0) * safe(s.yield,0), 2)}</b>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -562,14 +610,19 @@ export default function OpsCockpit() {
           <Card>
             <CardHeader><CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5"/>Stage Backlog</CardTitle></CardHeader>
             <CardContent className="space-y-3">
-              {stages.map((s, i) => (
-                <div key={s.id} className="grid grid-cols-12 gap-2 items-center">
-                  <div className="col-span-3 font-medium">{s.stage}</div>
-                  <Input className="col-span-3" type="number" value={backlog[i]?.units ?? 0} onChange={e => setBacklogUnits(s.id, parseFloat(e.target.value) || 0)} />
-                  <div className="col-span-3 text-sm">Weekly cap: <b>{fmt(capsPerWeek[i]?.cap ?? 0,2)}</b></div>
-                  <div className="col-span-3 text-sm">Weeks: <b>{fmt((backlogWeeks[i]?.weeksOf ?? 0),2)}</b> { (backlogWeeks[i]?.weeksOf ?? 0) > 1 ? "(>1 week)" : "(<=1 week)" }</div>
-                </div>
-              ))}
+              {stages.map((s, i) => {
+                const cap = capsPerWeek[i]?.cap ?? 0;
+                const units = backlog[i]?.units ?? 0;
+                const weeksOf = cap > 0 ? units / cap : 0;
+                return (
+                  <div key={s.id} className="grid grid-cols-12 gap-2 items-center">
+                    <div className="col-span-3 font-medium">{s.stage}</div>
+                    <Input className="col-span-3" type="number" value={units} onChange={e => setBacklogUnits(s.id, parseInt(e.target.value || "0", 10))} />
+                    <div className="col-span-3 text-sm">Weekly cap: <b>{fmt(cap,2)}</b></div>
+                    <div className="col-span-3 text-sm">Weeks: <b>{fmt(weeksOf,2)}</b> { weeksOf > 1 ? "(>1 week)" : "(<=1 week)" }</div>
+                  </div>
+                );
+              })}
             </CardContent>
           </Card>
         </TabsContent>
@@ -596,7 +649,7 @@ export default function OpsCockpit() {
                   system_constraint_candidate: systemDealsPerWeek.stage,
                   dealsPerWeek: systemDealsPerWeek.value,
                   rev90d, gp90d, r_fte_ceiling: rfteCeil,
-                  gp30_over_cac: gp30CAC, cash_flag: cashFlag,
+                  gp30_over_cac: gp30CAC,
                   lead_gap_per_week: leadGapPerWeek,
                 }
               }, null, 2)}
