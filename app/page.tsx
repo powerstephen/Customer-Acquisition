@@ -12,7 +12,6 @@ import {
   Target,
   DollarSign,
   BarChart3,
-  Gauge,
   ArrowUpRight,
   ArrowDownRight,
 } from "lucide-react";
@@ -168,6 +167,7 @@ type Benchmarks = {
   proposalRate: number;
   winRate: number;
   aspEUR: number;
+  onboardingsPerWeek: number; // NEW: target for delivery capacity
 };
 
 /* ---------------- Presets (illustrative) ---------------- */
@@ -229,6 +229,7 @@ const DEFAULT_BENCH: Benchmarks = {
   proposalRate: PREV.inputs.proposalRate,
   winRate: PREV.inputs.winRate,
   aspEUR: PREV.inputs.aspEUR,
+  onboardingsPerWeek: PREV.inputs.onboardingsPerWeek,
 };
 
 /* ---------------- Core math ---------------- */
@@ -305,20 +306,20 @@ export default function ChiefOfStaffCockpit() {
   const C = useMemo(() => computeKPIs(curr), [curr]);
   const P = useMemo(() => computeKPIs(prev), [prev]);
 
-  // Funnel benchmark ratios (for bars/badges)
+  // Ratios vs benchmark (for bars/badges)
   const leadsBenchRatio = bench.leads90 > 0 ? curr.leads90 / bench.leads90 : NaN;
   const lqBenchRatio = bench.qualifiedRate > 0 ? curr.qualifiedRate / bench.qualifiedRate : NaN;
   const qbBenchRatio = bench.bookRate > 0 ? curr.bookRate / bench.bookRate : NaN;
   const bsBenchRatio = bench.showRate > 0 ? curr.showRate / bench.showRate : NaN;
   const spBenchRatio = bench.proposalRate > 0 ? curr.proposalRate / bench.proposalRate : NaN;
   const pwBenchRatio = bench.winRate > 0 ? curr.winRate / bench.winRate : NaN;
+  const delBenchRatio = bench.onboardingsPerWeek > 0 ? curr.onboardingsPerWeek / bench.onboardingsPerWeek : NaN;
 
-  // Deltas for widget comparisons vs previous
+  // Deltas vs previous
   const dQualifiedRate = deltaPct(curr.qualifiedRate, prev.qualifiedRate);
   const dWinRate = deltaPct(curr.winRate, prev.winRate);
   const dASP = deltaPct(curr.aspEUR, prev.aspEUR);
   const dOnboardings = deltaPct(curr.onboardingsPerWeek, prev.onboardingsPerWeek);
-
   const dGP90 = deltaPct(C.gp90, P.gp90);
   const dDealsCeil = deltaPct(C.dealsPerWeekCeil, P.dealsPerWeekCeil);
 
@@ -328,7 +329,7 @@ export default function ChiefOfStaffCockpit() {
     setBench(DEFAULT_BENCH);
   };
 
-  // Impact simulation for "Stage Focus" and to pick demand bottleneck (argmax uplift)
+  // Impact simulation (used for “Stage Focus” and picking bottleneck)
   function simulateWith(target: Partial<CoSInputs>) {
     const sim: CoSInputs = { ...curr, ...target };
     const S = computeKPIs(sim);
@@ -374,6 +375,7 @@ export default function ChiefOfStaffCockpit() {
     { key: "won", label: "Won", ratio: pwBenchRatio, text: `${fmtPct(curr.winRate)} vs ${fmtPct(bench.winRate)} (${(pwBenchRatio * 100).toFixed(0)}%)`, rateText: "Proposal→Won" },
   ].map((r) => ({ ...r, badge: benchBadge(r.ratio), impact: impactForStage(r.key as any) }));
 
+  // Choose demand bottleneck by greatest GP uplift
   const demandImpacts = [
     { stage: "Leads", key: "leads" as const, ...impactForStage("leads") },
     { stage: "Lead→Qualified", key: "qual" as const, ...impactForStage("qual") },
@@ -390,55 +392,44 @@ export default function ChiefOfStaffCockpit() {
     .sort((a, b) => b.impact.deltaGP90 - a.impact.deltaGP90)
     .slice(0, 2);
 
-  const bannerClass = isDeliveryConstrained
-    ? "bg-red-50 border-red-200"
-    : "bg-amber-50 border-amber-200";
-  const constraintCardClass = isDeliveryConstrained
-    ? "border-red-300 bg-red-50"
-    : "border-amber-300 bg-amber-50";
-
   return (
     <main className="mx-auto max-w-7xl p-6 space-y-6">
-      {/* Header area (page controls) */}
+      {/* Title row (no global header now) */}
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
         <div className="flex items-center justify-between gap-3 flex-wrap">
-          <h2 className="text-xl md:text-2xl font-semibold tracking-tight">⚡ Throughput Funnel Analysis</h2>
+          <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">⚡ Throughput Funnel Analysis</h2>
           <div className="flex items-center gap-2">
-            <Button onClick={loadPresets} className="flex items-center gap-2">
+            <Button onClick={() => { setCurr(CURR.inputs); setPrev(PREV.inputs); setBench(DEFAULT_BENCH); }} className="flex items-center gap-2">
               <Database className="h-4 w-4" /> Load example data
             </Button>
           </div>
         </div>
 
-        {/* Dynamic Constraint Banner (colored) */}
-        <div className={`mt-3 rounded-lg border px-4 py-3 ${bannerClass}`}>
-          {isDeliveryConstrained ? (
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-              <div className="text-sm md:text-base font-medium">
-                Current bottleneck: <span className="text-red-700">Delivery (Onboarding)</span>
-              </div>
-              <div className="text-xs text-gray-700">
-                Demand {fmtNum(C.demandDealsPerWeek,2)}/wk vs Delivery {fmtNum(C.deliveryDealsPerWeek,2)}/wk
-              </div>
+        {/* Constraint banner (neutral, navy label) */}
+        <div className="mt-3 rounded-lg border px-4 py-3 bg-white">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div className="text-sm md:text-base font-medium">
+              <span className="text-blue-800">Current bottleneck:</span>{" "}
+              {isDeliveryConstrained ? (
+                <span className="text-red-700">Delivery (Onboarding)</span>
+              ) : (
+                <span className="text-gray-900">Demand — {topDemandImpact.stage}</span>
+              )}
             </div>
-          ) : (
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-              <div className="text-sm md:text-base font-medium">
-                Current bottleneck: <span className="text-amber-700">Demand — {topDemandImpact.stage}</span>
-              </div>
-              <div className="text-xs text-gray-700">
-                Largest uplift if fixed: {eur(topDemandImpact.deltaGP90, 0)} (90d GP)
-              </div>
+            <div className="text-xs text-gray-700">
+              {isDeliveryConstrained
+                ? <>Demand {fmtNum(C.demandDealsPerWeek,2)}/wk vs Delivery {fmtNum(C.deliveryDealsPerWeek,2)}/wk</>
+                : <>Largest uplift if fixed: {eur(topDemandImpact.deltaGP90, 0)} (90d GP)</>}
             </div>
-          )}
+          </div>
         </div>
       </motion.div>
 
       {/* -------- Top Widgets (2 rows of 4) -------- */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Constraint card (colored) */}
-        <Card className={constraintCardClass}>
-          <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-700">Constraint</CardTitle></CardHeader>
+        {/* Constraint card (neutral) */}
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-xs text-blue-800">Current bottleneck</CardTitle></CardHeader>
           <CardContent className="pt-0">
             <div className="text-base font-semibold">
               {isDeliveryConstrained ? "Delivery (Onboarding)" : `Demand — ${topDemandImpact.stage}`}
@@ -452,24 +443,10 @@ export default function ChiefOfStaffCockpit() {
         </Card>
 
         {/* Throughput ceiling */}
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">Throughput Ceiling (GP 90d)</CardTitle></CardHeader>
-          <CardContent className="pt-0">
-            <div className="text-lg font-semibold">{eur(C.gp90, 0)}</div>
-            <div className="text-[11px] text-gray-600">Deals/wk: {fmtNum(C.dealsPerWeekCeil,2)}</div>
-            <div className="text-[11px] mt-1">Δ vs previous: <DeltaTag value={dGP90} /></div>
-          </CardContent>
-        </Card>
+        <KpiCard title="Throughput Ceiling (GP 90d)" main={eur(C.gp90, 0)} sub={`Deals/wk: ${fmtNum(C.dealsPerWeekCeil,2)}`} delta={dGP90} />
 
         {/* R/FTE */}
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">R/FTE Ceiling</CardTitle></CardHeader>
-          <CardContent className="pt-0">
-            <div className="text-lg font-semibold">{eur(C.rfteCeil, 0)}</div>
-            <div className="text-[11px] text-gray-600">HC: {fmtNum(curr.headcount,0)}</div>
-            <div className="text-[11px] text-gray-500">Driven by deals ceiling & GM</div>
-          </CardContent>
-        </Card>
+        <KpiCard title="R/FTE Ceiling" main={eur(C.rfteCeil, 0)} sub={`HC: ${fmtNum(curr.headcount,0)}`} />
 
         {/* Cash efficiency */}
         <Card>
@@ -483,72 +460,44 @@ export default function ChiefOfStaffCockpit() {
         </Card>
 
         {/* Row 2 — widgets with comparisons */}
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">Qualified Rate (MQL→SQL)</CardTitle></CardHeader>
-          <CardContent className="pt-0">
-            <div className="flex items-baseline justify-between">
-              <div className="text-lg font-semibold">{fmtPct(curr.qualifiedRate)}</div>
-              <div className="text-[11px] text-gray-600 flex items-center gap-1">
-                vs prev <DeltaTag value={dQualifiedRate} />
-              </div>
-            </div>
-            <div className="mt-1"><MiniBar pct={curr.qualifiedRate} /></div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">Win Rate (Proposal→Won)</CardTitle></CardHeader>
-          <CardContent className="pt-0">
-            <div className="flex items-baseline justify-between">
-              <div className="text-lg font-semibold">{fmtPct(curr.winRate)}</div>
-              <div className="text-[11px] text-gray-600 flex items-center gap-1">
-                vs prev <DeltaTag value={dWinRate} />
-              </div>
-            </div>
-            <div className="mt-1"><MiniBar pct={curr.winRate} color="#16a34a" /></div>
-          </CardContent>
-        </Card>
-
+        <RateWidget title="Qualified Rate (MQL→SQL)" value={curr.qualifiedRate} delta={dQualifiedRate} />
+        <RateWidget title="Win Rate (Proposal→Won)" value={curr.winRate} delta={dWinRate} green />
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">ASP</CardTitle></CardHeader>
           <CardContent className="pt-0">
             <div className="flex items-baseline justify-between">
               <div className="text-lg font-semibold">{eur(curr.aspEUR, 0)}</div>
-              <div className="text-[11px] text-gray-600 flex items-center gap-1">
-                vs prev <DeltaTag value={dASP} />
-              </div>
+              <div className="text-[11px] text-gray-600 flex items-center gap-1">vs prev <DeltaTag value={dASP} /></div>
             </div>
             <div className="text-[11px] text-gray-600">GM: {fmtPct(curr.gm)}</div>
           </CardContent>
         </Card>
-
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">Onboardings Capacity</CardTitle></CardHeader>
           <CardContent className="pt-0">
             <div className="flex items-baseline justify-between">
               <div className="text-lg font-semibold">{fmtNum(curr.onboardingsPerWeek,2)}/wk</div>
-              <div className="text-[11px] text-gray-600 flex items-center gap-1">
-                vs prev <DeltaTag value={dOnboardings} />
-              </div>
+              <div className="text-[11px] text-gray-600 flex items-center gap-1">vs prev <DeltaTag value={dOnboardings} /></div>
             </div>
             <div className="text-[11px] text-gray-600">Avg Days: {fmtNum(curr.onboardingDaysAvg,0)}</div>
           </CardContent>
         </Card>
       </div>
 
-      {/* -------- Full Funnel vs Benchmark -------- */}
+      {/* -------- Full Funnel vs Benchmark (now includes Delivery) -------- */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><BarChart3 className="h-5 w-5" />Full Funnel vs Benchmark</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {[
-            { key: "leads", label: "Leads", ratio: leadsBenchRatio, text: `${fmtNum(curr.leads90)} vs ${fmtNum(bench.leads90)} (${(leadsBenchRatio * 100).toFixed(0)}%)`, rateText: "—" },
-            { key: "qual", label: "Qualified", ratio: lqBenchRatio, text: `${fmtPct(curr.qualifiedRate)} vs ${fmtPct(bench.qualifiedRate)} (${(lqBenchRatio * 100).toFixed(0)}%)`, rateText: "Lead→Qualified" },
-            { key: "book", label: "Booked", ratio: qbBenchRatio, text: `${fmtPct(curr.bookRate)} vs ${fmtPct(bench.bookRate)} (${(qbBenchRatio * 100).toFixed(0)}%)`, rateText: "Qualified→Booked" },
-            { key: "show", label: "Show", ratio: bsBenchRatio, text: `${fmtPct(curr.showRate)} vs ${fmtPct(bench.showRate)} (${(bsBenchRatio * 100).toFixed(0)}%)`, rateText: "Booked→Show" },
-            { key: "prop", label: "Proposal", ratio: spBenchRatio, text: `${fmtPct(curr.proposalRate)} vs ${fmtPct(bench.proposalRate)} (${(spBenchRatio * 100).toFixed(0)}%)`, rateText: "Show→Proposal" },
-            { key: "won", label: "Won", ratio: pwBenchRatio, text: `${fmtPct(curr.winRate)} vs ${fmtPct(bench.winRate)} (${(pwBenchRatio * 100).toFixed(0)}%)`, rateText: "Proposal→Won" },
+            { label: "Leads", ratio: leadsBenchRatio, text: `${fmtNum(curr.leads90)} vs ${fmtNum(bench.leads90)} (${(leadsBenchRatio * 100).toFixed(0)}%)`, rateText: "—" },
+            { label: "Qualified", ratio: lqBenchRatio, text: `${fmtPct(curr.qualifiedRate)} vs ${fmtPct(bench.qualifiedRate)} (${(lqBenchRatio * 100).toFixed(0)}%)`, rateText: "Lead→Qualified" },
+            { label: "Booked", ratio: qbBenchRatio, text: `${fmtPct(curr.bookRate)} vs ${fmtPct(bench.bookRate)} (${(qbBenchRatio * 100).toFixed(0)}%)`, rateText: "Qualified→Booked" },
+            { label: "Show", ratio: bsBenchRatio, text: `${fmtPct(curr.showRate)} vs ${fmtPct(bench.showRate)} (${(bsBenchRatio * 100).toFixed(0)}%)`, rateText: "Booked→Show" },
+            { label: "Proposal", ratio: spBenchRatio, text: `${fmtPct(curr.proposalRate)} vs ${fmtPct(bench.proposalRate)} (${(spBenchRatio * 100).toFixed(0)}%)`, rateText: "Show→Proposal" },
+            { label: "Won", ratio: pwBenchRatio, text: `${fmtPct(curr.winRate)} vs ${fmtPct(bench.winRate)} (${(pwBenchRatio * 100).toFixed(0)}%)`, rateText: "Proposal→Won" },
+            { label: "Delivery (Onboarding)", ratio: delBenchRatio, text: `${fmtNum(curr.onboardingsPerWeek,2)}/wk vs ${fmtNum(bench.onboardingsPerWeek,2)}/wk (${(delBenchRatio * 100).toFixed(0)}%)`, rateText: "Capacity" },
           ].map((row) => {
             const widthPct = Math.min(100, Math.max(0, row.ratio * 100));
             const color = covColor(row.ratio);
@@ -596,101 +545,15 @@ export default function ChiefOfStaffCockpit() {
         </CardContent>
       </Card>
 
-      {/* -------- Inputs — Single Comparison Table (center-aligned & editable) -------- */}
-      <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><DollarSign className="h-5 w-5" />Inputs — Current 90 | % Change | Previous 90</CardTitle></CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm border">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="p-2 text-left">Metric</th>
-                  <th className="p-2 text-center">Current 90</th>
-                  <th className="p-2 text-center">% Change</th>
-                  <th className="p-2 text-center">Previous 90</th>
-                </tr>
-              </thead>
-              <tbody>
-                {([
-                  { k: "Window (days)", t: "int", getC: () => curr.days, setC: (v:number)=> setCurr({ ...curr, days: Math.max(1, Math.round(v)) }), getP: () => prev.days, setP: (v:number)=> setPrev({ ...prev, days: Math.max(1, Math.round(v)) }) },
-                  { k: "Leads (90d)", t: "int", getC: () => curr.leads90, setC: (v:number)=> setCurr({ ...curr, leads90: Math.max(0, Math.round(v)) }), getP: () => prev.leads90, setP: (v:number)=> setPrev({ ...prev, leads90: Math.max(0, Math.round(v)) }), goodUp: true },
-                  { k: "Lead → Qualified", t: "pct", getC: () => curr.qualifiedRate, setC: (v:number)=> setCurr({ ...curr, qualifiedRate: v }), getP: () => prev.qualifiedRate, setP: (v:number)=> setPrev({ ...prev, qualifiedRate: v }), goodUp: true },
-                  { k: "Qualified → Booked", t: "pct", getC: () => curr.bookRate, setC: (v:number)=> setCurr({ ...curr, bookRate: v }), getP: () => prev.bookRate, setP: (v:number)=> setPrev({ ...prev, bookRate: v }), goodUp: true },
-                  { k: "Booked → Show", t: "pct", getC: () => curr.showRate, setC: (v:number)=> setCurr({ ...curr, showRate: v }), getP: () => prev.showRate, setP: (v:number)=> setPrev({ ...prev, showRate: v }), goodUp: true },
-                  { k: "Show → Proposal", t: "pct", getC: () => curr.proposalRate, setC: (v:number)=> setCurr({ ...curr, proposalRate: v }), getP: () => prev.proposalRate, setP: (v:number)=> setPrev({ ...prev, proposalRate: v }), goodUp: true },
-                  { k: "Proposal → Won", t: "pct", getC: () => curr.winRate, setC: (v:number)=> setCurr({ ...curr, winRate: v }), getP: () => prev.winRate, setP: (v:number)=> setPrev({ ...prev, winRate: v }), goodUp: true },
-                  { k: "ASP (€)", t: "eur", getC: () => curr.aspEUR, setC: (v:number)=> setCurr({ ...curr, aspEUR: v }), getP: () => prev.aspEUR, setP: (v:number)=> setPrev({ ...prev, aspEUR: v }), goodUp: true },
-                  { k: "Gross Margin", t: "pct", getC: () => curr.gm, setC: (v:number)=> setCurr({ ...curr, gm: v }), getP: () => prev.gm, setP: (v:number)=> setPrev({ ...prev, gm: v }), goodUp: true },
-                  { k: "Sales Cycle (days)", t: "int", getC: () => curr.salesCycleDays, setC: (v:number)=> setCurr({ ...curr, salesCycleDays: Math.max(0, Math.round(v)) }), getP: () => prev.salesCycleDays, setP: (v:number)=> setPrev({ ...prev, salesCycleDays: Math.max(0, Math.round(v)) }), goodUp: false },
-                  { k: "No-Show Rate", t: "pct", getC: () => curr.noShowRate, setC: (v:number)=> setCurr({ ...curr, noShowRate: v }), getP: () => prev.noShowRate, setP: (v:number)=> setPrev({ ...prev, noShowRate: v }), goodUp: false },
-                  { k: "Onboardings / wk", t: "num", getC: () => curr.onboardingsPerWeek, setC: (v:number)=> setCurr({ ...curr, onboardingsPerWeek: v }), getP: () => prev.onboardingsPerWeek, setP: (v:number)=> setPrev({ ...prev, onboardingsPerWeek: v }), goodUp: true },
-                  { k: "Onboarding Days (avg)", t: "int", getC: () => curr.onboardingDaysAvg, setC: (v:number)=> setCurr({ ...curr, onboardingDaysAvg: Math.max(0, Math.round(v)) }), getP: () => prev.onboardingDaysAvg, setP: (v:number)=> setPrev({ ...prev, onboardingDaysAvg: Math.max(0, Math.round(v)) }), goodUp: false },
-                  { k: "CAC (€)", t: "eur", getC: () => curr.CAC, setC: (v:number)=> setCurr({ ...curr, CAC: v }), getP: () => prev.CAC, setP: (v:number)=> setPrev({ ...prev, CAC: v }), goodUp: false },
-                  { k: "Payback (days)", t: "int", getC: () => curr.paybackDays, setC: (v:number)=> setCurr({ ...curr, paybackDays: Math.max(0, Math.round(v)) }), getP: () => prev.paybackDays, setP: (v:number)=> setPrev({ ...prev, paybackDays: Math.max(0, Math.round(v)) }), goodUp: false },
-                  { k: "DSO (days)", t: "int", getC: () => curr.DSO, setC: (v:number)=> setCurr({ ...curr, DSO: Math.max(0, Math.round(v)) }), getP: () => prev.DSO, setP: (v:number)=> setPrev({ ...prev, DSO: Math.max(0, Math.round(v)) }), goodUp: false },
-                  { k: "Headcount", t: "int", getC: () => curr.headcount, setC: (v:number)=> setCurr({ ...curr, headcount: Math.max(0, Math.round(v)) }), getP: () => prev.headcount, setP: (v:number)=> setPrev({ ...prev, headcount: Math.max(0, Math.round(v)) }), goodUp: null },
-                ] as const).map((row, i) => {
-                  const prevVal = row.getP();
-                  const currVal = row.getC();
-                  const pct = Number.isFinite(prevVal) && Math.abs(prevVal) > 1e-9
-                    ? (currVal - prevVal) / Math.abs(prevVal)
-                    : null;
-                  let good: null | boolean = null;
-                  // @ts-ignore goodUp exists on certain rows
-                  if (pct !== null) good = row.goodUp == null ? null : (row.goodUp ? pct >= 0 : pct < 0);
-                  const pctStr = pct === null ? "—" : (pct * 100).toFixed(1) + "%";
+      {/* -------- Inputs — Current | % Change | Previous -------- */}
+      <InputsTable
+        curr={curr}
+        prev={prev}
+        setCurr={setCurr}
+        setPrev={setPrev}
+      />
 
-                  return (
-                    <tr key={i} className="border-t align-middle">
-                      <td className="p-2 text-left">{row.k}</td>
-                      <td className="p-2 text-center min-w-[160px]">
-                        {row.t === "pct" ? (
-                          <PercentInput value={currVal as number} onChange={(v) => row.setC(v)} />
-                        ) : row.t === "eur" ? (
-                          <DecimalInput value={currVal as number} onChange={(v) => row.setC(v)} />
-                        ) : row.t === "num" ? (
-                          <DecimalInput step={0.1} value={currVal as number} onChange={(v) => row.setC(v)} />
-                        ) : (
-                          <Input
-                            type="number"
-                            value={currVal as number}
-                            onChange={(e) => row.setC(parseFloat(e.target.value))}
-                            className="text-center"
-                          />
-                        )}
-                      </td>
-                      <td className={`p-2 text-center min-w-[120px] ${good === null ? "" : good ? "text-emerald-700" : "text-red-700"}`}>
-                        {pctStr}
-                      </td>
-                      <td className="p-2 text-center min-w-[160px]">
-                        {row.t === "pct" ? (
-                          <PercentInput value={prevVal as number} onChange={(v) => row.setP(v)} />
-                        ) : row.t === "eur" ? (
-                          <DecimalInput value={prevVal as number} onChange={(v) => row.setP(v)} />
-                        ) : row.t === "num" ? (
-                          <DecimalInput step={0.1} value={prevVal as number} onChange={(v) => row.setP(v)} />
-                        ) : (
-                          <Input
-                            type="number"
-                            value={prevVal as number}
-                            onChange={(e) => row.setP(parseFloat(e.target.value))}
-                            className="text-center"
-                          />
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          <p className="text-[11px] text-gray-500 mt-2 text-center">
-            All numeric cells are center-aligned for quick scanning. Edit inline; % Change turns green when moving in the “good” direction.
-          </p>
-        </CardContent>
-      </Card>
-
-      {/* -------- Benchmarks / Targets -------- */}
+      {/* -------- Benchmarks / Targets (incl. Onboarding target) -------- */}
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><Target className="h-5 w-5" />Benchmarks / Targets</CardTitle></CardHeader>
         <CardContent className="grid md:grid-cols-2 gap-6">
@@ -705,6 +568,10 @@ export default function ChiefOfStaffCockpit() {
                 onChange={(e) => setBench({ ...bench, leads90: parseInt(e.target.value || "0", 10) })}
               />
             </div>
+            <div className="grid grid-cols-2 gap-3 items-center text-sm mt-3">
+              <Label>Onboardings Target (/wk)</Label>
+              <DecimalInput value={bench.onboardingsPerWeek} onChange={(v)=> setBench({ ...bench, onboardingsPerWeek: v })} />
+            </div>
           </div>
           <div>
             <div className="font-medium mb-2">Conversion Targets</div>
@@ -715,11 +582,7 @@ export default function ChiefOfStaffCockpit() {
               <Label>Show → Proposal</Label><PercentInput value={bench.proposalRate} onChange={(v) => setBench({ ...bench, proposalRate: v })} />
               <Label>Proposal → Won</Label><PercentInput value={bench.winRate} onChange={(v) => setBench({ ...bench, winRate: v })} />
             </div>
-          </div>
-
-          <div>
-            <div className="font-medium mb-2">Commercial Targets</div>
-            <div className="grid grid-cols-2 gap-3 items-center text-sm">
+            <div className="grid grid-cols-2 gap-3 items-center text-sm mt-3">
               <Label>ASP Target (€)</Label>
               <Input
                 type="number"
@@ -728,16 +591,143 @@ export default function ChiefOfStaffCockpit() {
                 onChange={(e) => setBench({ ...bench, aspEUR: parseFloat(e.target.value || "0") })}
               />
             </div>
-            <div className="text-xs text-gray-500 mt-2">
-              Use ASP target to catch mix/ICP or packaging issues (e.g., discounting dragging AOV).
-            </div>
           </div>
-
           <div className="text-xs text-gray-600 md:col-span-2 text-center">
             Bars & badges use these targets. Green ≥100%, Amber 95–99%, Red &lt;95% of target.
           </div>
         </CardContent>
       </Card>
     </main>
+  );
+}
+
+/* ---------- small presentational helpers ---------- */
+function KpiCard({ title, main, sub, delta }: { title: string; main: string; sub?: string; delta?: number | null }) {
+  return (
+    <Card>
+      <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">{title}</CardTitle></CardHeader>
+      <CardContent className="pt-0">
+        <div className="text-lg font-semibold">{main}</div>
+        {sub && <div className="text-[11px] text-gray-600">{sub}</div>}
+        {typeof delta !== "undefined" && <div className="text-[11px] mt-1">Δ vs previous: <DeltaTag value={delta ?? null} /></div>}
+      </CardContent>
+    </Card>
+  );
+}
+
+function RateWidget({ title, value, delta, green = false }: { title: string; value: number; delta: number | null; green?: boolean }) {
+  return (
+    <Card>
+      <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">{title}</CardTitle></CardHeader>
+      <CardContent className="pt-0">
+        <div className="flex items-baseline justify-between">
+          <div className="text-lg font-semibold">{fmtPct(value)}</div>
+          <div className="text-[11px] text-gray-600 flex items-center gap-1">vs prev <DeltaTag value={delta} /></div>
+        </div>
+        <div className="mt-1"><MiniBar pct={value} color={green ? "#16a34a" : "#4f46e5"} /></div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function InputsTable({
+  curr, prev, setCurr, setPrev,
+}: {
+  curr: CoSInputs; prev: CoSInputs;
+  setCurr: (v: CoSInputs) => void; setPrev: (v: CoSInputs) => void;
+}) {
+  return (
+    <Card>
+      <CardHeader><CardTitle className="flex items-center gap-2"><DollarSign className="h-5 w-5" />Inputs — Current 90 | % Change | Previous 90</CardTitle></CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm border">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="p-2 text-left">Metric</th>
+                <th className="p-2 text-center">Current 90</th>
+                <th className="p-2 text-center">% Change</th>
+                <th className="p-2 text-center">Previous 90</th>
+              </tr>
+            </thead>
+            <tbody>
+              {([
+                { k: "Window (days)", t: "int", getC: () => curr.days, setC: (v:number)=> setCurr({ ...curr, days: Math.max(1, Math.round(v)) }), getP: () => prev.days, setP: (v:number)=> setPrev({ ...prev, days: Math.max(1, Math.round(v)) }) },
+                { k: "Leads (90d)", t: "int", getC: () => curr.leads90, setC: (v:number)=> setCurr({ ...curr, leads90: Math.max(0, Math.round(v)) }), getP: () => prev.leads90, setP: (v:number)=> setPrev({ ...prev, leads90: Math.max(0, Math.round(v)) }), goodUp: true },
+                { k: "Lead → Qualified", t: "pct", getC: () => curr.qualifiedRate, setC: (v:number)=> setCurr({ ...curr, qualifiedRate: v }), getP: () => prev.qualifiedRate, setP: (v:number)=> setPrev({ ...prev, qualifiedRate: v }), goodUp: true },
+                { k: "Qualified → Booked", t: "pct", getC: () => curr.bookRate, setC: (v:number)=> setCurr({ ...curr, bookRate: v }), getP: () => prev.bookRate, setP: (v:number)=> setPrev({ ...prev, bookRate: v }), goodUp: true },
+                { k: "Booked → Show", t: "pct", getC: () => curr.showRate, setC: (v:number)=> setCurr({ ...curr, showRate: v }), getP: () => prev.showRate, setP: (v:number)=> setPrev({ ...prev, showRate: v }), goodUp: true },
+                { k: "Show → Proposal", t: "pct", getC: () => curr.proposalRate, setC: (v:number)=> setCurr({ ...curr, proposalRate: v }), getP: () => prev.proposalRate, setP: (v:number)=> setPrev({ ...prev, proposalRate: v }), goodUp: true },
+                { k: "Proposal → Won", t: "pct", getC: () => curr.winRate, setC: (v:number)=> setCurr({ ...curr, winRate: v }), getP: () => prev.winRate, setP: (v:number)=> setPrev({ ...prev, winRate: v }), goodUp: true },
+                { k: "ASP (€)", t: "eur", getC: () => curr.aspEUR, setC: (v:number)=> setCurr({ ...curr, aspEUR: v }), getP: () => prev.aspEUR, setP: (v:number)=> setPrev({ ...prev, aspEUR: v }), goodUp: true },
+                { k: "Gross Margin", t: "pct", getC: () => curr.gm, setC: (v:number)=> setCurr({ ...curr, gm: v }), getP: () => prev.gm, setP: (v:number)=> setPrev({ ...prev, gm: v }), goodUp: true },
+                { k: "Sales Cycle (days)", t: "int", getC: () => curr.salesCycleDays, setC: (v:number)=> setCurr({ ...curr, salesCycleDays: Math.max(0, Math.round(v)) }), getP: () => prev.salesCycleDays, setP: (v:number)=> setPrev({ ...prev, salesCycleDays: Math.max(0, Math.round(v)) }), goodUp: false },
+                { k: "No-Show Rate", t: "pct", getC: () => curr.noShowRate, setC: (v:number)=> setCurr({ ...curr, noShowRate: v }), getP: () => prev.noShowRate, setP: (v:number)=> setPrev({ ...prev, noShowRate: v }), goodUp: false },
+                { k: "Onboardings / wk", t: "num", getC: () => curr.onboardingsPerWeek, setC: (v:number)=> setCurr({ ...curr, onboardingsPerWeek: v }), getP: () => prev.onboardingsPerWeek, setP: (v:number)=> setPrev({ ...prev, onboardingsPerWeek: v }), goodUp: true },
+                { k: "Onboarding Days (avg)", t: "int", getC: () => curr.onboardingDaysAvg, setC: (v:number)=> setCurr({ ...curr, onboardingDaysAvg: Math.max(0, Math.round(v)) }), getP: () => prev.onboardingDaysAvg, setP: (v:number)=> setPrev({ ...prev, onboardingDaysAvg: Math.max(0, Math.round(v)) }), goodUp: false },
+                { k: "CAC (€)", t: "eur", getC: () => curr.CAC, setC: (v:number)=> setCurr({ ...curr, CAC: v }), getP: () => prev.CAC, setP: (v:number)=> setPrev({ ...prev, CAC: v }), goodUp: false },
+                { k: "Payback (days)", t: "int", getC: () => curr.paybackDays, setC: (v:number)=> setCurr({ ...curr, paybackDays: Math.max(0, Math.round(v)) }), getP: () => prev.paybackDays, setP: (v:number)=> setPrev({ ...prev, paybackDays: Math.max(0, Math.round(v)) }), goodUp: false },
+                { k: "DSO (days)", t: "int", getC: () => curr.DSO, setC: (v:number)=> setCurr({ ...curr, DSO: Math.max(0, Math.round(v)) }), getP: () => prev.DSO, setP: (v:number)=> setPrev({ ...prev, DSO: Math.max(0, Math.round(v)) }), goodUp: false },
+                { k: "Headcount", t: "int", getC: () => curr.headcount, setC: (v:number)=> setCurr({ ...curr, headcount: Math.max(0, Math.round(v)) }), getP: () => prev.headcount, setP: (v:number)=> setPrev({ ...prev, headcount: Math.max(0, Math.round(v)) }), goodUp: null },
+              ] as const).map((row, i) => {
+                const prevVal = row.getP();
+                const currVal = row.getC();
+                const pct = Number.isFinite(prevVal) && Math.abs(prevVal) > 1e-9
+                  ? (currVal - prevVal) / Math.abs(prevVal)
+                  : null;
+                let good: null | boolean = null;
+                // @ts-ignore
+                if (pct !== null) good = row.goodUp == null ? null : (row.goodUp ? pct >= 0 : pct < 0);
+                const pctStr = pct === null ? "—" : (pct * 100).toFixed(1) + "%";
+
+                return (
+                  <tr key={i} className="border-t align-middle">
+                    <td className="p-2 text-left">{row.k}</td>
+                    <td className="p-2 text-center min-w-[160px]">
+                      {row.t === "pct" ? (
+                        <PercentInput value={currVal as number} onChange={(v) => row.setC(v)} />
+                      ) : row.t === "eur" ? (
+                        <DecimalInput value={currVal as number} onChange={(v) => row.setC(v)} />
+                      ) : row.t === "num" ? (
+                        <DecimalInput step={0.1} value={currVal as number} onChange={(v) => row.setC(v)} />
+                      ) : (
+                        <Input
+                          type="number"
+                          value={currVal as number}
+                          onChange={(e) => row.setC(parseFloat(e.target.value))}
+                          className="text-center"
+                        />
+                      )}
+                    </td>
+                    <td className={`p-2 text-center min-w-[120px] ${good === null ? "" : good ? "text-emerald-700" : "text-red-700"}`}>
+                      {pctStr}
+                    </td>
+                    <td className="p-2 text-center min-w-[160px]">
+                      {row.t === "pct" ? (
+                        <PercentInput value={prevVal as number} onChange={(v) => row.setP(v)} />
+                      ) : row.t === "eur" ? (
+                        <DecimalInput value={prevVal as number} onChange={(v) => row.setP(v)} />
+                      ) : row.t === "num" ? (
+                        <DecimalInput step={0.1} value={prevVal as number} onChange={(v) => row.setP(v)} />
+                      ) : (
+                        <Input
+                          type="number"
+                          value={prevVal as number}
+                          onChange={(e) => row.setP(parseFloat(e.target.value))}
+                          className="text-center"
+                        />
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-[11px] text-gray-500 mt-2 text-center">
+          Edit inline; % Change turns green when moving in the “good” direction.
+        </p>
+      </CardContent>
+    </Card>
   );
 }
