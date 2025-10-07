@@ -9,14 +9,13 @@ import { Label } from "../components/ui/label";
 import {
   AlertTriangle,
   Database,
-  TrendingUp,
   Target,
   DollarSign,
   Activity,
-  ArrowUpRight,
-  ArrowDownRight,
   BarChart3,
   Gauge,
+  ArrowUpRight,
+  ArrowDownRight,
 } from "lucide-react";
 
 /* ---------------- Helpers ---------------- */
@@ -45,7 +44,7 @@ function DecimalInput({
       type="number"
       step={step}
       inputMode="decimal"
-      className={className}
+      className={`text-center ${className ?? ""}`}
       value={to2(value)}
       onChange={(e) => {
         const raw = parseFloat(e.target.value);
@@ -79,7 +78,7 @@ function PercentInput({
         min={0}
         max={100}
         inputMode="decimal"
-        className={className}
+        className={`text-center pr-6 ${className ?? ""}`}
         value={display}
         onChange={(e) => {
           const raw = parseFloat(e.target.value);
@@ -93,7 +92,7 @@ function PercentInput({
           onChange(Number(dec.toFixed(4)));
         }}
       />
-      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs">%</span>
+      <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 text-xs">%</span>
     </div>
   );
 }
@@ -114,6 +113,19 @@ function benchBadge(ratio: number) {
   if (ratio >= 1.0) return { label: "On / Above Target", className: "bg-emerald-100 text-emerald-700 border border-emerald-200" };
   if (ratio >= 0.95) return { label: "Slightly Below", className: "bg-amber-100 text-amber-700 border border-amber-200" };
   return { label: "Below Target", className: "bg-red-100 text-red-700 border border-red-200" };
+}
+
+function DeltaTag({ value }: { value: number | null }) {
+  if (value === null) return <span className="text-xs text-gray-400">—</span>;
+  const up = value > 0;
+  const color = up ? "text-emerald-600" : "text-red-600";
+  const Icon = up ? ArrowUpRight : ArrowDownRight;
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs ${color}`}>
+      <Icon className="h-3 w-3" />
+      {(Math.abs(value) * 100).toFixed(1)}%
+    </span>
+  );
 }
 
 /* ---------------- Data shapes ---------------- */
@@ -259,14 +271,12 @@ function computeKPIs(inp: CoSInputs) {
     propPerWeek,
     wonPerWeek,
     delPerWeek,
-
     reqLead,
     reqQual,
     reqBook,
     reqShow,
     reqProp,
     reqWon,
-
     demandDealsPerWeek,
     deliveryDealsPerWeek,
     dealsPerWeekCeil,
@@ -281,18 +291,6 @@ function deltaPct(curr: number, prev: number) {
   if (!Number.isFinite(prev) || prev === 0) return null;
   return (curr - prev) / Math.abs(prev);
 }
-function DeltaTag({ value }: { value: number | null }) {
-  if (value === null) return <span className="text-xs text-gray-400">—</span>;
-  const up = value > 0;
-  const color = up ? "text-emerald-600" : "text-red-600";
-  const Icon = up ? ArrowUpRight : ArrowDownRight;
-  return (
-    <span className={`inline-flex items-center gap-1 text-xs ${color}`}>
-      <Icon className="h-3 w-3" />
-      {(Math.abs(value) * 100).toFixed(1)}%
-    </span>
-  );
-}
 
 /* ---------------- Page ---------------- */
 export default function ChiefOfStaffCockpit() {
@@ -305,7 +303,6 @@ export default function ChiefOfStaffCockpit() {
 
   const dGP90 = deltaPct(C.gp90, P.gp90);
   const dRfte = deltaPct(C.rfteCeil, P.rfteCeil);
-  const dGP30 = deltaPct(C.gp30OverCAC, P.gp30OverCAC);
   const dDealsCeil = deltaPct(C.dealsPerWeekCeil, P.dealsPerWeekCeil);
 
   const loadPresets = () => {
@@ -314,7 +311,7 @@ export default function ChiefOfStaffCockpit() {
     setBench(DEFAULT_BENCH);
   };
 
-  // Benchmark ratios used for funnel bars and badges
+  // Benchmark ratios for funnel bars & badges
   const leadsBenchRatio = bench.leads90 > 0 ? curr.leads90 / bench.leads90 : NaN;
   const lqBenchRatio = bench.qualifiedRate > 0 ? curr.qualifiedRate / bench.qualifiedRate : NaN;
   const qbBenchRatio = bench.bookRate > 0 ? curr.bookRate / bench.bookRate : NaN;
@@ -322,12 +319,14 @@ export default function ChiefOfStaffCockpit() {
   const spBenchRatio = bench.proposalRate > 0 ? curr.proposalRate / bench.proposalRate : NaN;
   const pwBenchRatio = bench.winRate > 0 ? curr.winRate / bench.winRate : NaN;
 
+  // Impact simulation
   function simulateWith(target: Partial<CoSInputs>) {
     const sim: CoSInputs = { ...curr, ...target };
     const S = computeKPIs(sim);
     return { gp90: S.gp90, dealsPerWeekCeil: S.dealsPerWeekCeil };
   }
   function impactForStage(key: "leads" | "qual" | "book" | "show" | "prop" | "won") {
+    const maxRate = (a: number, b: number) => Math.max(a, b);
     switch (key) {
       case "leads": {
         const need = Math.max(curr.leads90, bench.leads90);
@@ -335,28 +334,23 @@ export default function ChiefOfStaffCockpit() {
         return { deltaGP90: sim.gp90 - C.gp90, newDeals: sim.dealsPerWeekCeil };
       }
       case "qual": {
-        const rate = Math.max(curr.qualifiedRate, bench.qualifiedRate);
-        const sim = simulateWith({ qualifiedRate: rate });
+        const sim = simulateWith({ qualifiedRate: maxRate(curr.qualifiedRate, bench.qualifiedRate) });
         return { deltaGP90: sim.gp90 - C.gp90, newDeals: sim.dealsPerWeekCeil };
       }
       case "book": {
-        const rate = Math.max(curr.bookRate, bench.bookRate);
-        const sim = simulateWith({ bookRate: rate });
+        const sim = simulateWith({ bookRate: maxRate(curr.bookRate, bench.bookRate) });
         return { deltaGP90: sim.gp90 - C.gp90, newDeals: sim.dealsPerWeekCeil };
       }
       case "show": {
-        const rate = Math.max(curr.showRate, bench.showRate);
-        const sim = simulateWith({ showRate: rate });
+        const sim = simulateWith({ showRate: maxRate(curr.showRate, bench.showRate) });
         return { deltaGP90: sim.gp90 - C.gp90, newDeals: sim.dealsPerWeekCeil };
       }
       case "prop": {
-        const rate = Math.max(curr.proposalRate, bench.proposalRate);
-        const sim = simulateWith({ proposalRate: rate });
+        const sim = simulateWith({ proposalRate: maxRate(curr.proposalRate, bench.proposalRate) });
         return { deltaGP90: sim.gp90 - C.gp90, newDeals: sim.dealsPerWeekCeil };
       }
       case "won": {
-        const rate = Math.max(curr.winRate, bench.winRate);
-        const sim = simulateWith({ winRate: rate });
+        const sim = simulateWith({ winRate: maxRate(curr.winRate, bench.winRate) });
         return { deltaGP90: sim.gp90 - C.gp90, newDeals: sim.dealsPerWeekCeil };
       }
     }
@@ -371,9 +365,7 @@ export default function ChiefOfStaffCockpit() {
     { key: "won", label: "Won", ratio: pwBenchRatio, text: `${fmtPct(curr.winRate)} vs ${fmtPct(bench.winRate)} (${(pwBenchRatio * 100).toFixed(0)}%)`, rateText: "Proposal→Won" },
   ].map((r) => ({ ...r, badge: benchBadge(r.ratio), impact: impactForStage(r.key as any) }));
 
-  const topImpacts = funnelRows
-    .sort((a, b) => b.impact.deltaGP90 - a.impact.deltaGP90)
-    .slice(0, 2);
+  const topImpacts = [...funnelRows].sort((a, b) => b.impact.deltaGP90 - a.impact.deltaGP90).slice(0, 2);
 
   return (
     <main className="mx-auto max-w-7xl p-6 space-y-6">
@@ -412,7 +404,6 @@ export default function ChiefOfStaffCockpit() {
           <CardContent className="pt-0">
             <div className="text-lg font-semibold">{eur(C.gp90, 0)}</div>
             <div className="text-[11px] text-gray-600">Deals/wk: {fmtNum(C.dealsPerWeekCeil,2)}</div>
-            <div className="text-[11px] mt-1">Δ vs prev: <DeltaTag value={dGP90} /></div>
           </CardContent>
         </Card>
 
@@ -421,7 +412,7 @@ export default function ChiefOfStaffCockpit() {
           <CardContent className="pt-0">
             <div className="text-lg font-semibold">{eur(C.rfteCeil, 0)}</div>
             <div className="text-[11px] text-gray-600">HC: {fmtNum(curr.headcount,0)}</div>
-            <div className="text-[11px] mt-1"><Activity className="inline h-3 w-3 mr-1" /> Trend vs prev shown above</div>
+            <div className="text-[11px] mt-1"><Activity className="inline h-3 w-3 mr-1" /> Trend vs prev shown below</div>
           </CardContent>
         </Card>
 
@@ -478,7 +469,7 @@ export default function ChiefOfStaffCockpit() {
         </Card>
       </div>
 
-      {/* -------- Full Funnel vs Benchmark -------- */}
+      {/* -------- Full Funnel vs Benchmark (bars + badges) -------- */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><BarChart3 className="h-5 w-5" />Full Funnel vs Benchmark</CardTitle>
@@ -524,10 +515,10 @@ export default function ChiefOfStaffCockpit() {
                 <div className="font-medium">{r.label}</div>
                 <span className={`rounded-full px-2 py-[2px] text-[10px] ${r.badge.className}`}>{r.badge.label}</span>
               </div>
-              <div className="text-sm mt-1">
+              <div className="text-sm mt-1 text-center">
                 If restored to target → <b>{eur(r.impact.deltaGP90, 0)}</b> GP uplift over 90d
               </div>
-              <div className="text-xs text-gray-600">
+              <div className="text-xs text-gray-600 text-center">
                 New deals ceiling: {fmtNum(r.impact.newDeals,2)}/wk (subject to Delivery capacity).
               </div>
             </div>
@@ -535,18 +526,18 @@ export default function ChiefOfStaffCockpit() {
         </CardContent>
       </Card>
 
-      {/* -------- Inputs — Single Comparison Table (editable) -------- */}
+      {/* -------- Inputs — Single Comparison Table (center-aligned & editable) -------- */}
       <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><DollarSign className="h-5 w-5" />Inputs — Current 90 vs % Change vs Previous 90</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="flex items-center gap-2"><DollarSign className="h-5 w-5" />Inputs — Current 90 | % Change | Previous 90</CardTitle></CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
             <table className="w-full text-sm border">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="text-left p-2">Metric</th>
-                  <th className="text-right p-2">Current 90</th>
-                  <th className="text-right p-2">% Change</th>
-                  <th className="text-right p-2">Previous 90</th>
+                  <th className="p-2 text-left">Metric</th>
+                  <th className="p-2 text-center">Current 90</th>
+                  <th className="p-2 text-center">% Change</th>
+                  <th className="p-2 text-center">Previous 90</th>
                 </tr>
               </thead>
               <tbody>
@@ -566,6 +557,7 @@ export default function ChiefOfStaffCockpit() {
                     setC: (v:number)=> setCurr({ ...curr, leads90: Math.max(0, Math.round(v)) }),
                     getP: () => prev.leads90,
                     setP: (v:number)=> setPrev({ ...prev, leads90: Math.max(0, Math.round(v)) }),
+                    goodUp: true,
                   },
                   {
                     k: "Lead → Qualified",
@@ -646,7 +638,7 @@ export default function ChiefOfStaffCockpit() {
                     setC: (v:number)=> setCurr({ ...curr, noShowRate: v }),
                     getP: () => prev.noShowRate,
                     setP: (v:number)=> setPrev({ ...prev, noShowRate: v }),
-                    goodUp: false, // lower is better
+                    goodUp: false,
                   },
                   {
                     k: "Onboardings / week",
@@ -664,7 +656,7 @@ export default function ChiefOfStaffCockpit() {
                     setC: (v:number)=> setCurr({ ...curr, onboardingDaysAvg: Math.max(0, Math.round(v)) }),
                     getP: () => prev.onboardingDaysAvg,
                     setP: (v:number)=> setPrev({ ...prev, onboardingDaysAvg: Math.max(0, Math.round(v)) }),
-                    goodUp: false, // lower is better
+                    goodUp: false,
                   },
                   {
                     k: "CAC (€)",
@@ -673,7 +665,7 @@ export default function ChiefOfStaffCockpit() {
                     setC: (v:number)=> setCurr({ ...curr, CAC: v }),
                     getP: () => prev.CAC,
                     setP: (v:number)=> setPrev({ ...prev, CAC: v }),
-                    goodUp: false, // lower is better
+                    goodUp: false,
                   },
                   {
                     k: "Payback (days)",
@@ -682,7 +674,7 @@ export default function ChiefOfStaffCockpit() {
                     setC: (v:number)=> setCurr({ ...curr, paybackDays: Math.max(0, Math.round(v)) }),
                     getP: () => prev.paybackDays,
                     setP: (v:number)=> setPrev({ ...prev, paybackDays: Math.max(0, Math.round(v)) }),
-                    goodUp: false, // lower is better
+                    goodUp: false,
                   },
                   {
                     k: "DSO (days)",
@@ -691,7 +683,7 @@ export default function ChiefOfStaffCockpit() {
                     setC: (v:number)=> setCurr({ ...curr, DSO: Math.max(0, Math.round(v)) }),
                     getP: () => prev.DSO,
                     setP: (v:number)=> setPrev({ ...prev, DSO: Math.max(0, Math.round(v)) }),
-                    goodUp: false, // lower is better
+                    goodUp: false,
                   },
                   {
                     k: "Headcount",
@@ -700,7 +692,7 @@ export default function ChiefOfStaffCockpit() {
                     setC: (v:number)=> setCurr({ ...curr, headcount: Math.max(0, Math.round(v)) }),
                     getP: () => prev.headcount,
                     setP: (v:number)=> setPrev({ ...prev, headcount: Math.max(0, Math.round(v)) }),
-                    goodUp: null, // neutral
+                    goodUp: null,
                   },
                 ] as const).map((row, i) => {
                   const prevVal = row.getP();
@@ -708,8 +700,7 @@ export default function ChiefOfStaffCockpit() {
                   const pct = Number.isFinite(prevVal) && Math.abs(prevVal) > 1e-9
                     ? (currVal - prevVal) / Math.abs(prevVal)
                     : null;
-                  // color: green if change is "good" direction
-                  let good = null as null | boolean;
+                  let good: null | boolean = null;
                   if (pct !== null) {
                     if (row.goodUp === null || row.goodUp === undefined) good = null;
                     else good = row.goodUp ? pct >= 0 : pct < 0;
@@ -718,8 +709,8 @@ export default function ChiefOfStaffCockpit() {
 
                   return (
                     <tr key={i} className="border-t align-middle">
-                      <td className="p-2">{row.k}</td>
-                      <td className="p-2 text-right min-w-[140px]">
+                      <td className="p-2 text-left">{row.k}</td>
+                      <td className="p-2 text-center min-w-[160px]">
                         {row.t === "pct" ? (
                           <PercentInput value={currVal} onChange={(v) => row.setC(v)} />
                         ) : row.t === "eur" ? (
@@ -731,14 +722,14 @@ export default function ChiefOfStaffCockpit() {
                             type="number"
                             value={currVal}
                             onChange={(e) => row.setC(parseFloat(e.target.value))}
-                            className="text-right"
+                            className="text-center"
                           />
                         )}
                       </td>
-                      <td className={`p-2 text-right ${good === null ? "" : good ? "text-emerald-700" : "text-red-700"}`}>
+                      <td className={`p-2 text-center min-w-[120px] ${good === null ? "" : good ? "text-emerald-700" : "text-red-700"}`}>
                         {pctStr}
                       </td>
-                      <td className="p-2 text-right min-w-[140px]">
+                      <td className="p-2 text-center min-w-[160px]">
                         {row.t === "pct" ? (
                           <PercentInput value={prevVal} onChange={(v) => row.setP(v)} />
                         ) : row.t === "eur" ? (
@@ -750,7 +741,7 @@ export default function ChiefOfStaffCockpit() {
                             type="number"
                             value={prevVal}
                             onChange={(e) => row.setP(parseFloat(e.target.value))}
-                            className="text-right"
+                            className="text-center"
                           />
                         )}
                       </td>
@@ -760,8 +751,8 @@ export default function ChiefOfStaffCockpit() {
               </tbody>
             </table>
           </div>
-          <p className="text-[11px] text-gray-500 mt-2">
-            Edit any value inline. % Change colors green when moving in the “good” direction (e.g., Win% up, CAC/DSO/Sales Cycle down).
+          <p className="text-[11px] text-gray-500 mt-2 text-center">
+            All numeric cells are center-aligned for quick scanning. Edit inline; % Change colors green when moving in the “good” direction.
           </p>
         </CardContent>
       </Card>
@@ -776,6 +767,7 @@ export default function ChiefOfStaffCockpit() {
               <Label>Leads Target (90d)</Label>
               <Input
                 type="number"
+                className="text-center"
                 value={bench.leads90}
                 onChange={(e) => setBench({ ...bench, leads90: parseInt(e.target.value || "0", 10) })}
               />
@@ -791,15 +783,11 @@ export default function ChiefOfStaffCockpit() {
               <Label>Proposal → Won</Label><PercentInput value={bench.winRate} onChange={(v) => setBench({ ...bench, winRate: v })} />
             </div>
           </div>
-          <div className="text-xs text-gray-600 md:col-span-2">
+          <div className="text-xs text-gray-600 md:col-span-2 text-center">
             Bars & badges use these targets. Green ≥100%, Amber 95–99%, Red &lt;95% of target.
           </div>
         </CardContent>
       </Card>
-
-      <p className="text-[11px] text-gray-500">
-        Tip: Choose 1–2 red stages with the largest € impact and run a 2-week “Exploit + Subordinate” sprint before considering headcount.
-      </p>
     </main>
   );
 }
