@@ -11,14 +11,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className="bg-white text-gray-900">
-        <header className="border-b bg-white shadow-sm">
-          <div className="mx-auto max-w-7xl px-6 py-4">
-            <h1 className="text-2xl md:text-4xl font-semibold text-gray-900 tracking-tight">
-              ⚡ Throughput Funnel Analysis
-            </h1>
-            {/* Removed the subheading line entirely per request */}
-          </div>
-        </header>
+        {/* No header — page owns its own title */}
         <main>{children}</main>
       </body>
     </html>
