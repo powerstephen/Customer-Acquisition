@@ -9,7 +9,7 @@ import { Label } from "../components/ui/label";
 import {
   AlertTriangle,
   Database,
-  Target as TargetIcon,
+  Target,
   DollarSign,
   Activity,
   BarChart3,
@@ -119,6 +119,7 @@ function deltaPct(curr: number, prev: number) {
   if (!Number.isFinite(prev) || prev === 0) return null;
   return (curr - prev) / Math.abs(prev);
 }
+
 function DeltaTag({ value }: { value: number | null }) {
   if (value === null) return <span className="text-xs text-gray-400">—</span>;
   const up = value > 0;
@@ -130,25 +131,6 @@ function DeltaTag({ value }: { value: number | null }) {
       {(Math.abs(value) * 100).toFixed(1)}%
     </span>
   );
-}
-
-/** Picks the minimum by value but breaks ties in upstream (earlier) order. */
-function pickDemandConstraintOrdered(
-  coverage: Record<string, number>,
-  order: string[]
-): { name: string; value: number } {
-  let bestName = order[0];
-  let bestVal = Number.POSITIVE_INFINITY;
-  const EPS = 1e-9;
-  for (const key of order) {
-    const v = coverage[key];
-    if (!Number.isFinite(v)) continue;
-    if (v + EPS < bestVal) {
-      bestVal = v;
-      bestName = key;
-    }
-  }
-  return { name: bestName, value: bestVal };
 }
 
 /* ---------------- Data shapes ---------------- */
@@ -186,6 +168,7 @@ type Benchmarks = {
   showRate: number;
   proposalRate: number;
   winRate: number;
+  aspEUR: number; // NEW: AOV/ASP target
 };
 
 /* ---------------- Presets (illustrative) ---------------- */
@@ -246,6 +229,7 @@ const DEFAULT_BENCH: Benchmarks = {
   showRate: PREV.inputs.showRate,
   proposalRate: PREV.inputs.proposalRate,
   winRate: PREV.inputs.winRate,
+  aspEUR: PREV.inputs.aspEUR, // default ASP benchmark = previous
 };
 
 /* ---------------- Core math ---------------- */
@@ -267,6 +251,7 @@ function computeKPIs(inp: CoSInputs) {
 
   const delPerWeek = inp.onboardingsPerWeek;
 
+  // Required to saturate delivery
   const reqWon = delPerWeek;
   const reqProp = rPW > 0 ? reqWon / rPW : 0;
   const reqShow = rSP * rPW > 0 ? reqWon / (rSP * rPW) : 0;
@@ -321,23 +306,7 @@ export default function ChiefOfStaffCockpit() {
   const C = useMemo(() => computeKPIs(curr), [curr]);
   const P = useMemo(() => computeKPIs(prev), [prev]);
 
-  // Deltas for widgets
-  const dQualified = deltaPct(curr.qualifiedRate, prev.qualifiedRate);
-  const dWin = deltaPct(curr.winRate, prev.winRate);
-  const dASP = deltaPct(curr.aspEUR, prev.aspEUR);
-  const dOnb = deltaPct(curr.onboardingsPerWeek, prev.onboardingsPerWeek);
-  const dDealsCeil = deltaPct(C.dealsPerWeekCeil, P.dealsPerWeekCeil);
-  const dGP90 = deltaPct(C.gp90, P.gp90);
-  const dRfte = deltaPct(C.rfteCeil, P.rfteCeil);
-  const dGP30CAC = deltaPct(C.gp30OverCAC, P.gp30OverCAC);
-
-  const loadPresets = () => {
-    setCurr(CURR.inputs);
-    setPrev(PREV.inputs);
-    setBench(DEFAULT_BENCH);
-  };
-
-  // Benchmark ratios for funnel bars & badges
+  // Funnel benchmark ratios (for bars/badges)
   const leadsBenchRatio = bench.leads90 > 0 ? curr.leads90 / bench.leads90 : NaN;
   const lqBenchRatio = bench.qualifiedRate > 0 ? curr.qualifiedRate / bench.qualifiedRate : NaN;
   const qbBenchRatio = bench.bookRate > 0 ? curr.bookRate / bench.bookRate : NaN;
@@ -345,31 +314,22 @@ export default function ChiefOfStaffCockpit() {
   const spBenchRatio = bench.proposalRate > 0 ? curr.proposalRate / bench.proposalRate : NaN;
   const pwBenchRatio = bench.winRate > 0 ? curr.winRate / bench.winRate : NaN;
 
-  // --- Demand-stage coverage (actual / required to saturate delivery) ---
-  const demandCoverageMap: Record<string, number> = {
-    "Leads": C.reqLead > 0 ? C.leadsPerWeek / C.reqLead : Infinity,
-    "Lead→Qualified": C.reqQual > 0 ? C.qualPerWeek / C.reqQual : Infinity,
-    "Qualified→Booked": C.reqBook > 0 ? C.bookPerWeek / C.reqBook : Infinity,
-    "Booked→Show": C.reqShow > 0 ? C.showPerWeek / C.reqShow : Infinity,
-    "Show→Proposal": C.reqProp > 0 ? C.propPerWeek / C.reqProp : Infinity,
-    "Proposal→Won": C.reqWon > 0 ? C.wonPerWeek / C.reqWon : Infinity,
+  // Deltas for widget comparisons vs previous
+  const dQualifiedRate = deltaPct(curr.qualifiedRate, prev.qualifiedRate);
+  const dWinRate = deltaPct(curr.winRate, prev.winRate);
+  const dASP = deltaPct(curr.aspEUR, prev.aspEUR);
+  const dOnboardings = deltaPct(curr.onboardingsPerWeek, prev.onboardingsPerWeek);
+
+  const dGP90 = deltaPct(C.gp90, P.gp90);
+  const dDealsCeil = deltaPct(C.dealsPerWeekCeil, P.dealsPerWeekCeil);
+
+  const loadPresets = () => {
+    setCurr(CURR.inputs);
+    setPrev(PREV.inputs);
+    setBench(DEFAULT_BENCH);
   };
-  const funnelOrder = [
-    "Leads",
-    "Lead→Qualified",
-    "Qualified→Booked",
-    "Booked→Show",
-    "Show→Proposal",
-    "Proposal→Won",
-  ];
-  const { name: demandStage, value: demandStageCoverage } = pickDemandConstraintOrdered(
-    demandCoverageMap,
-    funnelOrder
-  );
 
-  const isDeliveryConstrained = C.deliveryDealsPerWeek + 1e-9 < C.demandDealsPerWeek;
-
-  // Impact sim for Stage Focus section
+  // Impact simulation for picking demand bottleneck (argmax uplift)
   function simulateWith(target: Partial<CoSInputs>) {
     const sim: CoSInputs = { ...curr, ...target };
     const S = computeKPIs(sim);
@@ -415,15 +375,29 @@ export default function ChiefOfStaffCockpit() {
     { key: "won", label: "Won", ratio: pwBenchRatio, text: `${fmtPct(curr.winRate)} vs ${fmtPct(bench.winRate)} (${(pwBenchRatio * 100).toFixed(0)}%)`, rateText: "Proposal→Won" },
   ].map((r) => ({ ...r, badge: benchBadge(r.ratio), impact: impactForStage(r.key as any) }));
 
-  const topImpacts = [...funnelRows].sort((a, b) => b.impact.deltaGP90 - a.impact.deltaGP90).slice(0, 2);
+  // Pick demand bottleneck as stage with max GP uplift if restored to benchmark
+  const demandImpacts = [
+    { stage: "Leads", key: "leads" as const, ...impactForStage("leads") },
+    { stage: "Lead→Qualified", key: "qual" as const, ...impactForStage("qual") },
+    { stage: "Qualified→Booked", key: "book" as const, ...impactForStage("book") },
+    { stage: "Booked→Show", key: "show" as const, ...impactForStage("show") },
+    { stage: "Show→Proposal", key: "prop" as const, ...impactForStage("prop") },
+    { stage: "Proposal→Won", key: "won" as const, ...impactForStage("won") },
+  ];
+  const topDemandImpact = demandImpacts.reduce((a, b) => (b.deltaGP90 > a.deltaGP90 ? b : a), demandImpacts[0]);
 
-  /* ---------------- UI ---------------- */
+  const isDeliveryConstrained = C.deliveryDealsPerWeek + 1e-9 < C.demandDealsPerWeek;
+
+  const topImpacts = [...funnelRows]
+    .sort((a, b) => b.impact.deltaGP90 - a.impact.deltaGP90)
+    .slice(0, 2);
+
   return (
     <main className="mx-auto max-w-7xl p-6 space-y-6">
-      {/* Header controls */}
+      {/* Header area (page controls) */}
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
         <div className="flex items-center justify-between gap-3 flex-wrap">
-          <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">⚡ Throughput Funnel Analysis</h2>
+          <h2 className="text-xl md:text-2xl font-semibold tracking-tight">⚡ Throughput Funnel Analysis</h2>
           <div className="flex items-center gap-2">
             <Button onClick={loadPresets} className="flex items-center gap-2">
               <Database className="h-4 w-4" /> Load example data
@@ -431,7 +405,7 @@ export default function ChiefOfStaffCockpit() {
           </div>
         </div>
 
-        {/* Dynamic Constraint Banner */}
+        {/* Dynamic Constraint Banner (subtitle) */}
         <div className="mt-3 rounded-lg border bg-gray-50 px-4 py-3">
           {isDeliveryConstrained ? (
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
@@ -445,58 +419,35 @@ export default function ChiefOfStaffCockpit() {
           ) : (
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
               <div className="text-sm md:text-base font-medium">
-                Current bottleneck: <span className="text-amber-700">Demand — {demandStage}</span>
+                Current bottleneck: <span className="text-amber-700">Demand — {topDemandImpact.stage}</span>
               </div>
               <div className="text-xs text-gray-600">
-                Coverage at weakest demand stage: {(Math.max(0, Math.min(1e3, demandStageCoverage)) * 100).toFixed(0)}%
+                Largest uplift if fixed: {eur(topDemandImpact.deltaGP90, 0)} (90d GP)
               </div>
             </div>
           )}
         </div>
 
         <p className="text-gray-600 mt-2">
-          Benchmark-aware funnel, live constraint detection, and estimated 90-day GP impact for the weakest stages.
+          Benchmark-aware funnel, constraint detection (live), and estimated 90-day GP impact for the weakest stages.
         </p>
       </motion.div>
 
       {/* -------- Top Widgets (2 rows of 4) -------- */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Constraint with drilldown */}
+        {/* Constraint card */}
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">Constraint</CardTitle></CardHeader>
-          <CardContent className="pt-0 space-y-2">
+          <CardContent className="pt-0">
             <div className="text-base font-semibold">
-              {isDeliveryConstrained ? "Delivery (Onboarding)" : `Demand — ${demandStage}`}
+              {isDeliveryConstrained ? "Delivery (Onboarding)" : `Demand — ${topDemandImpact.stage}`}
             </div>
             <div className="text-[11px] text-gray-600">
               {isDeliveryConstrained
                 ? `Dem ${fmtNum(C.demandDealsPerWeek,2)}/wk vs Del ${fmtNum(C.deliveryDealsPerWeek,2)}/wk`
-                : `Coverage at weakest stage: ${(Math.max(0, Math.min(1e3, demandStageCoverage)) * 100).toFixed(0)}%`}
+                : `Fix to benchmark ⇒ ${eur(topDemandImpact.deltaGP90, 0)} GP uplift (90d)`}
             </div>
-            <div className="text-[11px]">Δ Deals Ceiling: <DeltaTag value={dDealsCeil} /></div>
-
-            {/* Drilldown (simple disclosure) */}
-            <details className="mt-1">
-              <summary className="text-xs text-indigo-600 cursor-pointer select-none">View coverage breakdown</summary>
-              <div className="mt-2 text-xs grid grid-cols-2 gap-x-3 gap-y-1">
-                {funnelOrder.map((stage) => {
-                  const v = demandCoverageMap[stage];
-                  const pct = Number.isFinite(v) ? Math.max(0, Math.min(1000, v)) * 100 : 0;
-                  const color = covColor(v);
-                  return (
-                    <div key={stage} className="col-span-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-gray-600">{stage}</span>
-                        <span className="font-medium" style={{ color }}>{pct.toFixed(0)}%</span>
-                      </div>
-                      <div className="w-full h-2 bg-gray-200 rounded overflow-hidden">
-                        <div className="h-2" style={{ width: `${Math.min(100, pct)}%`, background: color }} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </details>
+            <div className="text-[11px] mt-1">Δ Deals Ceiling: <DeltaTag value={dDealsCeil} /></div>
           </CardContent>
         </Card>
 
@@ -506,7 +457,7 @@ export default function ChiefOfStaffCockpit() {
           <CardContent className="pt-0">
             <div className="text-lg font-semibold">{eur(C.gp90, 0)}</div>
             <div className="text-[11px] text-gray-600">Deals/wk: {fmtNum(C.dealsPerWeekCeil,2)}</div>
-            <div className="text-[11px] mt-1">Δ vs prev: <DeltaTag value={dGP90} /></div>
+            <div className="text-[11px] mt-1">Δ vs previous: <DeltaTag value={dGP90} /></div>
           </CardContent>
         </Card>
 
@@ -516,7 +467,7 @@ export default function ChiefOfStaffCockpit() {
           <CardContent className="pt-0">
             <div className="text-lg font-semibold">{eur(C.rfteCeil, 0)}</div>
             <div className="text-[11px] text-gray-600">HC: {fmtNum(curr.headcount,0)}</div>
-            <div className="text-[11px] mt-1">Δ vs prev: <DeltaTag value={dRfte} /></div>
+            <div className="text-[11px] text-gray-500">Driven by deals ceiling & GM</div>
           </CardContent>
         </Card>
 
@@ -527,64 +478,60 @@ export default function ChiefOfStaffCockpit() {
             <div className={`text-lg font-semibold ${C.gp30OverCAC < 3 && C.gp30OverCAC > 0 ? "text-red-600" : "text-emerald-600"}`}>
               {fmtNum(C.gp30OverCAC,2)}
             </div>
-            <div className="text-[11px] text-gray-600">{"<3 ⇒ cash constraint"}</div>
-            <div className="text-[11px] mt-1">Δ vs prev: <DeltaTag value={dGP30CAC} /></div>
+            <div className="text-[11px] text-gray-600">{"<3 => cash constraint"}</div>
           </CardContent>
         </Card>
 
-        {/* Row 2 with comparisons */}
+        {/* Row 2 — widgets with comparisons */}
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">Qualified Rate (MQL→SQL)</CardTitle></CardHeader>
-          <CardContent className="pt-0 space-y-1">
-            <div className="flex items-center justify-between">
+          <CardContent className="pt-0">
+            <div className="flex items-baseline justify-between">
               <div className="text-lg font-semibold">{fmtPct(curr.qualifiedRate)}</div>
-              <BarChart3 className="h-4 w-4 text-indigo-600" />
+              <div className="text-[11px] text-gray-600 flex items-center gap-1">
+                vs prev <DeltaTag value={dQualifiedRate} />
+              </div>
             </div>
-            <MiniBar pct={curr.qualifiedRate} />
-            <div className="text-[11px] text-gray-600 flex items-center justify-between">
-              <span>Prev: {fmtPct(prev.qualifiedRate)}</span>
-              <span>Δ: <DeltaTag value={dQualified} /></span>
-            </div>
+            <div className="mt-1"><MiniBar pct={curr.qualifiedRate} /></div>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">Win Rate (Proposal→Won)</CardTitle></CardHeader>
-          <CardContent className="pt-0 space-y-1">
-            <div className="flex items-center justify-between">
+          <CardContent className="pt-0">
+            <div className="flex items-baseline justify-between">
               <div className="text-lg font-semibold">{fmtPct(curr.winRate)}</div>
-              <TargetIcon className="h-4 w-4 text-indigo-600" />
+              <div className="text-[11px] text-gray-600 flex items-center gap-1">
+                vs prev <DeltaTag value={dWinRate} />
+              </div>
             </div>
-            <MiniBar pct={curr.winRate} color="#16a34a" />
-            <div className="text-[11px] text-gray-600 flex items-center justify-between">
-              <span>Prev: {fmtPct(prev.winRate)}</span>
-              <span>Δ: <DeltaTag value={dWin} /></span>
-            </div>
+            <div className="mt-1"><MiniBar pct={curr.winRate} color="#16a34a" /></div>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">ASP</CardTitle></CardHeader>
-          <CardContent className="pt-0 space-y-1">
-            <div className="text-lg font-semibold">{eur(curr.aspEUR, 0)}</div>
-            <div className="text-[11px] text-gray-600 flex items-center justify-between">
-              <span>Prev: {eur(prev.aspEUR, 0)}</span>
-              <span>Δ: <DeltaTag value={dASP} /></span>
+          <CardContent className="pt-0">
+            <div className="flex items-baseline justify-between">
+              <div className="text-lg font-semibold">{eur(curr.aspEUR, 0)}</div>
+              <div className="text-[11px] text-gray-600 flex items-center gap-1">
+                vs prev <DeltaTag value={dASP} />
+              </div>
             </div>
+            <div className="text-[11px] text-gray-600">GM: {fmtPct(curr.gm)}</div>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">Onboardings Capacity</CardTitle></CardHeader>
-          <CardContent className="pt-0 space-y-1">
-            <div className="flex items-center justify-between">
+          <CardContent className="pt-0">
+            <div className="flex items-baseline justify-between">
               <div className="text-lg font-semibold">{fmtNum(curr.onboardingsPerWeek,2)}/wk</div>
-              <Gauge className="h-4 w-4 text-indigo-600" />
+              <div className="text-[11px] text-gray-600 flex items-center gap-1">
+                vs prev <DeltaTag value={dOnboardings} />
+              </div>
             </div>
-            <div className="text-[11px] text-gray-600 flex items-center justify-between">
-              <span>Prev: {fmtNum(prev.onboardingsPerWeek,2)}/wk</span>
-              <span>Δ: <DeltaTag value={dOnb} /></span>
-            </div>
+            <div className="text-[11px] text-gray-600">Avg Days: {fmtNum(curr.onboardingDaysAvg,0)}</div>
           </CardContent>
         </Card>
       </div>
@@ -680,69 +627,53 @@ export default function ChiefOfStaffCockpit() {
                   { k: "DSO (days)", t: "int", getC: () => curr.DSO, setC: (v:number)=> setCurr({ ...curr, DSO: Math.max(0, Math.round(v)) }), getP: () => prev.DSO, setP: (v:number)=> setPrev({ ...prev, DSO: Math.max(0, Math.round(v)) }), goodUp: false },
                   { k: "Headcount", t: "int", getC: () => curr.headcount, setC: (v:number)=> setCurr({ ...curr, headcount: Math.max(0, Math.round(v)) }), getP: () => prev.headcount, setP: (v:number)=> setPrev({ ...prev, headcount: Math.max(0, Math.round(v)) }), goodUp: null },
                 ] as const).map((row, i) => {
-                  // @ts-ignore
                   const prevVal = row.getP();
-                  // @ts-ignore
                   const currVal = row.getC();
                   const pct = Number.isFinite(prevVal) && Math.abs(prevVal) > 1e-9
                     ? (currVal - prevVal) / Math.abs(prevVal)
                     : null;
                   let good: null | boolean = null;
-                  // @ts-ignore
-                  const goodUp = row.goodUp;
-                  if (pct !== null) {
-                    if (goodUp === null || goodUp === undefined) good = null;
-                    else good = goodUp ? pct >= 0 : pct < 0;
-                  }
+                  // @ts-ignore goodUp exists on certain rows
+                  if (pct !== null) good = row.goodUp == null ? null : (row.goodUp ? pct >= 0 : pct < 0);
                   const pctStr = pct === null ? "—" : (pct * 100).toFixed(1) + "%";
 
                   return (
                     <tr key={i} className="border-t align-middle">
                       <td className="p-2 text-left">{row.k}</td>
                       <td className="p-2 text-center min-w-[160px]">
-                        {
-                          // @ts-ignore
-                          row.t === "pct" ? (
-                            <PercentInput value={currVal as number} onChange={(v) => row.setC(v)} />
-                          ) : // @ts-ignore
-                          row.t === "eur" ? (
-                            <DecimalInput value={currVal as number} onChange={(v) => row.setC(v)} />
-                          ) : // @ts-ignore
-                          row.t === "num" ? (
-                            <DecimalInput step={0.1} value={currVal as number} onChange={(v) => row.setC(v)} />
-                          ) : (
-                            <Input
-                              type="number"
-                              value={currVal as number}
-                              onChange={(e) => row.setC(parseFloat(e.target.value))}
-                              className="text-center"
-                            />
-                          )
-                        }
+                        {row.t === "pct" ? (
+                          <PercentInput value={currVal as number} onChange={(v) => row.setC(v)} />
+                        ) : row.t === "eur" ? (
+                          <DecimalInput value={currVal as number} onChange={(v) => row.setC(v)} />
+                        ) : row.t === "num" ? (
+                          <DecimalInput step={0.1} value={currVal as number} onChange={(v) => row.setC(v)} />
+                        ) : (
+                          <Input
+                            type="number"
+                            value={currVal as number}
+                            onChange={(e) => row.setC(parseFloat(e.target.value))}
+                            className="text-center"
+                          />
+                        )}
                       </td>
                       <td className={`p-2 text-center min-w-[120px] ${good === null ? "" : good ? "text-emerald-700" : "text-red-700"}`}>
                         {pctStr}
                       </td>
                       <td className="p-2 text-center min-w-[160px]">
-                        {
-                          // @ts-ignore
-                          row.t === "pct" ? (
-                            <PercentInput value={prevVal as number} onChange={(v) => row.setP(v)} />
-                          ) : // @ts-ignore
-                          row.t === "eur" ? (
-                            <DecimalInput value={prevVal as number} onChange={(v) => row.setP(v)} />
-                          ) : // @ts-ignore
-                          row.t === "num" ? (
-                            <DecimalInput step={0.1} value={prevVal as number} onChange={(v) => row.setP(v)} />
-                          ) : (
-                            <Input
-                              type="number"
-                              value={prevVal as number}
-                              onChange={(e) => row.setP(parseFloat(e.target.value))}
-                              className="text-center"
-                            />
-                          )
-                        }
+                        {row.t === "pct" ? (
+                          <PercentInput value={prevVal as number} onChange={(v) => row.setP(v)} />
+                        ) : row.t === "eur" ? (
+                          <DecimalInput value={prevVal as number} onChange={(v) => row.setP(v)} />
+                        ) : row.t === "num" ? (
+                          <DecimalInput step={0.1} value={prevVal as number} onChange={(v) => row.setP(v)} />
+                        ) : (
+                          <Input
+                            type="number"
+                            value={prevVal as number}
+                            onChange={(e) => row.setP(parseFloat(e.target.value))}
+                            className="text-center"
+                          />
+                        )}
                       </td>
                     </tr>
                   );
@@ -758,7 +689,7 @@ export default function ChiefOfStaffCockpit() {
 
       {/* -------- Benchmarks / Targets -------- */}
       <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><TargetIcon className="h-5 w-5" />Benchmarks / Targets</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="flex items-center gap-2"><Target className="h-5 w-5" />Benchmarks / Targets</CardTitle></CardHeader>
         <CardContent className="grid md:grid-cols-2 gap-6">
           <div>
             <div className="font-medium mb-2">Volume</div>
@@ -782,6 +713,23 @@ export default function ChiefOfStaffCockpit() {
               <Label>Proposal → Won</Label><PercentInput value={bench.winRate} onChange={(v) => setBench({ ...bench, winRate: v })} />
             </div>
           </div>
+
+          <div>
+            <div className="font-medium mb-2">Commercial Targets</div>
+            <div className="grid grid-cols-2 gap-3 items-center text-sm">
+              <Label>ASP Target (€)</Label>
+              <Input
+                type="number"
+                className="text-center"
+                value={bench.aspEUR}
+                onChange={(e) => setBench({ ...bench, aspEUR: parseFloat(e.target.value || "0") })}
+              />
+            </div>
+            <div className="text-xs text-gray-500 mt-2">
+              Use ASP target to catch mix/ICP or packaging issues (e.g., discounting dragging AOV).
+            </div>
+          </div>
+
           <div className="text-xs text-gray-600 md:col-span-2 text-center">
             Bars & badges use these targets. Green ≥100%, Amber 95–99%, Red &lt;95% of target.
           </div>
