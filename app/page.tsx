@@ -11,7 +11,6 @@ import {
   Database,
   Target,
   DollarSign,
-  Activity,
   BarChart3,
   Gauge,
   ArrowUpRight,
@@ -168,7 +167,7 @@ type Benchmarks = {
   showRate: number;
   proposalRate: number;
   winRate: number;
-  aspEUR: number; // NEW: AOV/ASP target
+  aspEUR: number;
 };
 
 /* ---------------- Presets (illustrative) ---------------- */
@@ -229,7 +228,7 @@ const DEFAULT_BENCH: Benchmarks = {
   showRate: PREV.inputs.showRate,
   proposalRate: PREV.inputs.proposalRate,
   winRate: PREV.inputs.winRate,
-  aspEUR: PREV.inputs.aspEUR, // default ASP benchmark = previous
+  aspEUR: PREV.inputs.aspEUR,
 };
 
 /* ---------------- Core math ---------------- */
@@ -329,7 +328,7 @@ export default function ChiefOfStaffCockpit() {
     setBench(DEFAULT_BENCH);
   };
 
-  // Impact simulation for picking demand bottleneck (argmax uplift)
+  // Impact simulation for "Stage Focus" and to pick demand bottleneck (argmax uplift)
   function simulateWith(target: Partial<CoSInputs>) {
     const sim: CoSInputs = { ...curr, ...target };
     const S = computeKPIs(sim);
@@ -375,7 +374,6 @@ export default function ChiefOfStaffCockpit() {
     { key: "won", label: "Won", ratio: pwBenchRatio, text: `${fmtPct(curr.winRate)} vs ${fmtPct(bench.winRate)} (${(pwBenchRatio * 100).toFixed(0)}%)`, rateText: "Proposal→Won" },
   ].map((r) => ({ ...r, badge: benchBadge(r.ratio), impact: impactForStage(r.key as any) }));
 
-  // Pick demand bottleneck as stage with max GP uplift if restored to benchmark
   const demandImpacts = [
     { stage: "Leads", key: "leads" as const, ...impactForStage("leads") },
     { stage: "Lead→Qualified", key: "qual" as const, ...impactForStage("qual") },
@@ -392,6 +390,13 @@ export default function ChiefOfStaffCockpit() {
     .sort((a, b) => b.impact.deltaGP90 - a.impact.deltaGP90)
     .slice(0, 2);
 
+  const bannerClass = isDeliveryConstrained
+    ? "bg-red-50 border-red-200"
+    : "bg-amber-50 border-amber-200";
+  const constraintCardClass = isDeliveryConstrained
+    ? "border-red-300 bg-red-50"
+    : "border-amber-300 bg-amber-50";
+
   return (
     <main className="mx-auto max-w-7xl p-6 space-y-6">
       {/* Header area (page controls) */}
@@ -405,14 +410,14 @@ export default function ChiefOfStaffCockpit() {
           </div>
         </div>
 
-        {/* Dynamic Constraint Banner (subtitle) */}
-        <div className="mt-3 rounded-lg border bg-gray-50 px-4 py-3">
+        {/* Dynamic Constraint Banner (colored) */}
+        <div className={`mt-3 rounded-lg border px-4 py-3 ${bannerClass}`}>
           {isDeliveryConstrained ? (
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
               <div className="text-sm md:text-base font-medium">
                 Current bottleneck: <span className="text-red-700">Delivery (Onboarding)</span>
               </div>
-              <div className="text-xs text-gray-600">
+              <div className="text-xs text-gray-700">
                 Demand {fmtNum(C.demandDealsPerWeek,2)}/wk vs Delivery {fmtNum(C.deliveryDealsPerWeek,2)}/wk
               </div>
             </div>
@@ -421,33 +426,28 @@ export default function ChiefOfStaffCockpit() {
               <div className="text-sm md:text-base font-medium">
                 Current bottleneck: <span className="text-amber-700">Demand — {topDemandImpact.stage}</span>
               </div>
-              <div className="text-xs text-gray-600">
+              <div className="text-xs text-gray-700">
                 Largest uplift if fixed: {eur(topDemandImpact.deltaGP90, 0)} (90d GP)
               </div>
             </div>
           )}
         </div>
-
-        <p className="text-gray-600 mt-2">
-          Benchmark-aware funnel, constraint detection (live), and estimated 90-day GP impact for the weakest stages.
-        </p>
       </motion.div>
 
       {/* -------- Top Widgets (2 rows of 4) -------- */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Constraint card */}
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">Constraint</CardTitle></CardHeader>
+        {/* Constraint card (colored) */}
+        <Card className={constraintCardClass}>
+          <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-700">Constraint</CardTitle></CardHeader>
           <CardContent className="pt-0">
             <div className="text-base font-semibold">
               {isDeliveryConstrained ? "Delivery (Onboarding)" : `Demand — ${topDemandImpact.stage}`}
             </div>
-            <div className="text-[11px] text-gray-600">
+            <div className="text-[11px] text-gray-700">
               {isDeliveryConstrained
                 ? `Dem ${fmtNum(C.demandDealsPerWeek,2)}/wk vs Del ${fmtNum(C.deliveryDealsPerWeek,2)}/wk`
                 : `Fix to benchmark ⇒ ${eur(topDemandImpact.deltaGP90, 0)} GP uplift (90d)`}
             </div>
-            <div className="text-[11px] mt-1">Δ Deals Ceiling: <DeltaTag value={dDealsCeil} /></div>
           </CardContent>
         </Card>
 
@@ -576,20 +576,23 @@ export default function ChiefOfStaffCockpit() {
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5" />Stage Focus — Impact on 90d GP if fixed to Target</CardTitle></CardHeader>
         <CardContent className="grid md:grid-cols-2 gap-4">
-          {topImpacts.map((r) => (
-            <div key={r.key} className="rounded-xl border p-3">
-              <div className="flex items-center justify-between">
-                <div className="font-medium">{r.label}</div>
-                <span className={`rounded-full px-2 py-[2px] text-[10px] ${r.badge.className}`}>{r.badge.label}</span>
+          {[...funnelRows]
+            .sort((a, b) => b.impact.deltaGP90 - a.impact.deltaGP90)
+            .slice(0, 2)
+            .map((r) => (
+              <div key={r.key} className="rounded-xl border p-3">
+                <div className="flex items-center justify-between">
+                  <div className="font-medium">{r.label}</div>
+                  <span className={`rounded-full px-2 py-[2px] text-[10px] ${r.badge.className}`}>{r.badge.label}</span>
+                </div>
+                <div className="text-sm mt-1 text-center">
+                  If restored to target → <b>{eur(r.impact.deltaGP90, 0)}</b> GP uplift over 90d
+                </div>
+                <div className="text-xs text-gray-600 text-center">
+                  New deals ceiling: {fmtNum(r.impact.newDeals,2)}/wk (subject to Delivery capacity).
+                </div>
               </div>
-              <div className="text-sm mt-1 text-center">
-                If restored to target → <b>{eur(r.impact.deltaGP90, 0)}</b> GP uplift over 90d
-              </div>
-              <div className="text-xs text-gray-600 text-center">
-                New deals ceiling: {fmtNum(r.impact.newDeals,2)}/wk (subject to Delivery capacity).
-              </div>
-            </div>
-          ))}
+            ))}
         </CardContent>
       </Card>
 
