@@ -25,7 +25,7 @@ const weeksIn = (days: number) => (days > 0 ? days / 7 : 0);
 const safe = (n: number, alt = 0) => (Number.isFinite(n) && !Number.isNaN(n) ? n : alt);
 const fmtNum = (n: number, d = 0) =>
   Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: d }) : "-";
-const fmtPct = (n: number) => `${(safe(n, 0) * 100).toFixed(2)}%`;
+const fmtPct = (n: number, d = 2) => `${(safe(n, 0) * 100).toFixed(d)}%`;
 const eur = (n: number, d = 0) =>
   new Intl.NumberFormat("en-IE", { style: "currency", currency: "EUR", maximumFractionDigits: d }).format(safe(n, 0));
 const pp = (n: number) => `${(n * 100).toFixed(1)} pp`;
@@ -106,8 +106,16 @@ function MiniBar({ pct, color = "#4f46e5" }: { pct: number; color?: string }) {
     </div>
   );
 }
-const barColor = (coverage: number) =>
+const covColor = (coverage: number) =>
   coverage >= 1 ? "#059669" : coverage >= 0.8 ? "#f59e0b" : "#dc2626"; // green / amber / red
+
+// Status badge for benchmark attainment
+function benchBadge(ratio: number) {
+  if (!Number.isFinite(ratio)) return { label: "—", className: "bg-gray-100 text-gray-700 border border-gray-200" };
+  if (ratio >= 1.0) return { label: "On / Above Target", className: "bg-emerald-100 text-emerald-700 border border-emerald-200" };
+  if (ratio >= 0.95) return { label: "Slightly Below", className: "bg-amber-100 text-amber-700 border border-amber-200" };
+  return { label: "Below Target", className: "bg-red-100 text-red-700 border border-red-200" };
+}
 
 /* ---------------- Data shapes ---------------- */
 type CoSInputs = {
@@ -123,7 +131,7 @@ type CoSInputs = {
   aspEUR: number; // €
   gm: number; // 0..1
   salesCycleDays: number;
-  noShowRate: number; // optional display only
+  noShowRate: number;
 
   // Delivery / Product
   onboardingsPerWeek: number; // capacity
@@ -138,9 +146,15 @@ type CoSInputs = {
   headcount: number;
 };
 
-type Scenario = {
-  name: string;
-  inputs: CoSInputs;
+type Scenario = { name: string; inputs: CoSInputs; };
+
+type Benchmarks = {
+  leads90: number;
+  qualifiedRate: number;
+  bookRate: number;
+  showRate: number;
+  proposalRate: number;
+  winRate: number;
 };
 
 /* ---------------- Presets (illustrative) ---------------- */
@@ -148,7 +162,7 @@ const PREV: Scenario = {
   name: "Prev 90d (baseline)",
   inputs: {
     days: 90,
-    leads90: 1100,
+    leads90: 1250, // using your example
     qualifiedRate: 0.32,
     bookRate: 0.62,
     showRate: 0.82,
@@ -173,12 +187,12 @@ const CURR: Scenario = {
   name: "Current 90d (illustrative)",
   inputs: {
     days: 90,
-    leads90: 1200,
-    qualifiedRate: 0.35,
+    leads90: 1300, // slightly above target to show green
+    qualifiedRate: 0.304, // 95% of 0.32 -> yellow
     bookRate: 0.65,
     showRate: 0.85,
     proposalRate: 0.70,
-    winRate: 0.40,
+    winRate: 0.20, // big drop from 0.36 -> red
     aspEUR: 8000,
     gm: 0.75,
     salesCycleDays: 42,
@@ -194,6 +208,15 @@ const CURR: Scenario = {
   },
 };
 
+const DEFAULT_BENCH: Benchmarks = {
+  leads90: PREV.inputs.leads90,
+  qualifiedRate: PREV.inputs.qualifiedRate,
+  bookRate: PREV.inputs.bookRate,
+  showRate: PREV.inputs.showRate,
+  proposalRate: PREV.inputs.proposalRate,
+  winRate: PREV.inputs.winRate,
+};
+
 /* ---------------- Core math ---------------- */
 function computeKPIs(inp: CoSInputs) {
   const w = weeksIn(inp.days);
@@ -206,13 +229,6 @@ function computeKPIs(inp: CoSInputs) {
   const rSP = inp.proposalRate;
   const rPW = inp.winRate;
 
-  // Downstream products from each stage
-  const downFromLead = rLQ * rQB * rBS * rSP * rPW;
-  const downFromQual = rQB * rBS * rSP * rPW;
-  const downFromBook = rBS * rSP * rPW;
-  const downFromShow = rSP * rPW;
-  const downFromProp = rPW;
-
   // Actual per week from leads
   const qualPerWeek = leadsPerWeek * rLQ;
   const bookPerWeek = qualPerWeek * rQB;
@@ -224,12 +240,12 @@ function computeKPIs(inp: CoSInputs) {
   const delPerWeek = inp.onboardingsPerWeek;
 
   // Required per week at each stage to saturate Delivery
-  const reqWon = delPerWeek; // assume all onboarded were won
+  const reqWon = delPerWeek;
   const reqProp = rPW > 0 ? reqWon / rPW : 0;
   const reqShow = rSP * rPW > 0 ? reqWon / (rSP * rPW) : 0;
   const reqBook = rBS * rSP * rPW > 0 ? reqWon / (rBS * rSP * rPW) : 0;
   const reqQual = rQB * rBS * rSP * rPW > 0 ? reqWon / (rQB * rBS * rSP * rPW) : 0;
-  const reqLead = downFromLead > 0 ? reqWon / downFromLead : 0;
+  const reqLead = rLQ * rQB * rBS * rSP * rPW > 0 ? reqWon / (rLQ * rQB * rBS * rSP * rPW) : 0;
 
   // Demand vs Delivery ceiling
   const demandDealsPerWeek = wonPerWeek;
@@ -303,6 +319,9 @@ export default function ChiefOfStaffCockpit() {
   const [curr, setCurr] = useState<CoSInputs>(CURR.inputs);
   const [prev, setPrev] = useState<CoSInputs>(PREV.inputs);
 
+  // Benchmarks (defaults to prev 90d but editable)
+  const [bench, setBench] = useState<Benchmarks>(DEFAULT_BENCH);
+
   const C = useMemo(() => computeKPIs(curr), [curr]);
   const P = useMemo(() => computeKPIs(prev), [prev]);
 
@@ -314,11 +333,11 @@ export default function ChiefOfStaffCockpit() {
   const dQRate = deltaPct(C.qRate, P.qRate);
   const dWRate = deltaPct(C.wRate, P.wRate);
   const dASP = deltaPct(curr.aspEUR, prev.aspEUR);
-  const dOnb = deltaPct(curr.onboardingsPerWeek, prev.onboardingsPerWeek);
 
   const loadPresets = () => {
     setCurr(CURR.inputs);
     setPrev(PREV.inputs);
+    setBench(DEFAULT_BENCH);
   };
 
   // Stage coverage (actual / required)
@@ -329,31 +348,18 @@ export default function ChiefOfStaffCockpit() {
   const covProp = C.reqProp > 0 ? C.propPerWeek / C.reqProp : 0;
   const covWon  = C.reqWon  > 0 ? C.wonPerWeek  / C.reqWon  : 0;
 
-  // Benchmark deltas (curr vs prev) by stage rate (pp = percentage points)
-  const rateDeltas = {
-    LQ: curr.qualifiedRate - prev.qualifiedRate,
-    QB: curr.bookRate - prev.bookRate,
-    BS: curr.showRate - prev.showRate,
-    SP: curr.proposalRate - prev.proposalRate,
-    PW: curr.winRate - prev.winRate,
-  };
+  // Benchmark attainment ratios
+  const weeks = C.weeks || 1;
+  const leadsBenchRatio = bench.leads90 > 0 ? curr.leads90 / bench.leads90 : NaN;
+  const lqBenchRatio = bench.qualifiedRate > 0 ? curr.qualifiedRate / bench.qualifiedRate : NaN;
+  const qbBenchRatio = bench.bookRate > 0 ? curr.bookRate / bench.bookRate : NaN;
+  const bsBenchRatio = bench.showRate > 0 ? curr.showRate / bench.showRate : NaN;
+  const spBenchRatio = bench.proposalRate > 0 ? curr.proposalRate / bench.proposalRate : NaN;
+  const pwBenchRatio = bench.winRate > 0 ? curr.winRate / bench.winRate : NaN;
 
-  // Focus index blends coverage gap + rate deterioration
-  // focusIndex = 0 (healthy) → 1+ (critical)
-  function focusIndex(coverage: number, currRate: number, prevRate: number) {
-    const covGap = Math.max(0, 1 - coverage); // 0..∞
-    const rateDropRel = prevRate > 0 ? Math.max(0, (prevRate - currRate) / prevRate) : 0; // 0..1+
-    // Weighting: 60% coverage, 40% rate drop
-    return 0.6 * covGap + 0.4 * rateDropRel;
-  }
-
-  function focusBadge(fi: number) {
-    if (fi >= 0.30) return { label: "Critical", className: "bg-red-100 text-red-700 border border-red-200" };
-    if (fi >= 0.15) return { label: "Watch", className: "bg-amber-100 text-amber-700 border border-amber-200" };
-    return { label: "Healthy", className: "bg-emerald-100 text-emerald-700 border border-emerald-200" };
-  }
-
-  // Build rows for the Full Funnel table with benchmark awareness
+  // Build rows for the Full Funnel table with:
+  // - Coverage color (Actual/wk vs Required/wk)
+  // - Benchmark badge (ratio vs target)
   const funnelRows = [
     {
       key: "leads",
@@ -361,10 +367,9 @@ export default function ChiefOfStaffCockpit() {
       actual: C.leadsPerWeek,
       req: C.reqLead,
       cov: covLead,
-      rateLabel: "—",
-      currRate: 1,
-      prevRate: 1,
-      deltaPP: 0,
+      benchRatio: leadsBenchRatio,
+      benchText: `${fmtNum(curr.leads90)} vs target ${fmtNum(bench.leads90)} (${(leadsBenchRatio * 100).toFixed(0)}%)`,
+      rateText: "—",
     },
     {
       key: "qual",
@@ -372,10 +377,9 @@ export default function ChiefOfStaffCockpit() {
       actual: C.qualPerWeek,
       req: C.reqQual,
       cov: covQual,
-      rateLabel: "Lead→Qualified",
-      currRate: curr.qualifiedRate,
-      prevRate: prev.qualifiedRate,
-      deltaPP: rateDeltas.LQ,
+      benchRatio: lqBenchRatio,
+      benchText: `${fmtPct(curr.qualifiedRate)} vs ${fmtPct(bench.qualifiedRate)} (${(lqBenchRatio * 100).toFixed(0)}%)`,
+      rateText: "Lead→Qualified",
     },
     {
       key: "book",
@@ -383,10 +387,9 @@ export default function ChiefOfStaffCockpit() {
       actual: C.bookPerWeek,
       req: C.reqBook,
       cov: covBook,
-      rateLabel: "Qualified→Booked",
-      currRate: curr.bookRate,
-      prevRate: prev.bookRate,
-      deltaPP: rateDeltas.QB,
+      benchRatio: qbBenchRatio,
+      benchText: `${fmtPct(curr.bookRate)} vs ${fmtPct(bench.bookRate)} (${(qbBenchRatio * 100).toFixed(0)}%)`,
+      rateText: "Qualified→Booked",
     },
     {
       key: "show",
@@ -394,10 +397,9 @@ export default function ChiefOfStaffCockpit() {
       actual: C.showPerWeek,
       req: C.reqShow,
       cov: covShow,
-      rateLabel: "Booked→Show",
-      currRate: curr.showRate,
-      prevRate: prev.showRate,
-      deltaPP: rateDeltas.BS,
+      benchRatio: bsBenchRatio,
+      benchText: `${fmtPct(curr.showRate)} vs ${fmtPct(bench.showRate)} (${(bsBenchRatio * 100).toFixed(0)}%)`,
+      rateText: "Booked→Show",
     },
     {
       key: "prop",
@@ -405,10 +407,9 @@ export default function ChiefOfStaffCockpit() {
       actual: C.propPerWeek,
       req: C.reqProp,
       cov: covProp,
-      rateLabel: "Show→Proposal",
-      currRate: curr.proposalRate,
-      prevRate: prev.proposalRate,
-      deltaPP: rateDeltas.SP,
+      benchRatio: spBenchRatio,
+      benchText: `${fmtPct(curr.proposalRate)} vs ${fmtPct(bench.proposalRate)} (${(spBenchRatio * 100).toFixed(0)}%)`,
+      rateText: "Show→Proposal",
     },
     {
       key: "won",
@@ -416,10 +417,9 @@ export default function ChiefOfStaffCockpit() {
       actual: C.wonPerWeek,
       req: C.reqWon,
       cov: covWon,
-      rateLabel: "Proposal→Won",
-      currRate: curr.winRate,
-      prevRate: prev.winRate,
-      deltaPP: rateDeltas.PW,
+      benchRatio: pwBenchRatio,
+      benchText: `${fmtPct(curr.winRate)} vs ${fmtPct(bench.winRate)} (${(pwBenchRatio * 100).toFixed(0)}%)`,
+      rateText: "Proposal→Won",
     },
     {
       key: "onb",
@@ -427,40 +427,18 @@ export default function ChiefOfStaffCockpit() {
       actual: C.delPerWeek,
       req: C.delPerWeek,
       cov: 1,
-      rateLabel: "—",
-      currRate: 1,
-      prevRate: 1,
-      deltaPP: 0,
+      benchRatio: NaN,
+      benchText: "—",
+      rateText: "—",
     },
-  ].map((r) => {
-    const fi = focusIndex(r.cov, r.currRate, r.prevRate);
-    const badge = focusBadge(fi);
-    return { ...r, fi, badge };
-  });
+  ];
 
-  // Top risks for Stage Focus card (exclude Leads/Onboarded)
-  const riskRows = funnelRows
-    .filter((r) => ["qual", "book", "show", "prop", "won"].includes(r.key))
-    .sort((a, b) => b.fi - a.fi)
+  // Pick top 2 benchmark underperformers (exclude Onboarded)
+  const benchRisks = funnelRows
+    .filter((r) => r.key !== "onb")
+    .map((r) => ({ ...r, score: Number.isFinite(r.benchRatio) ? r.benchRatio : 1 }))
+    .sort((a, b) => a.score - b.score)
     .slice(0, 2);
-
-  // Simple lever text by stage
-  function leverFor(key: string) {
-    switch (key) {
-      case "qual":
-        return "Tighten ICP + forms; route faster to SDR; enrich for fit → raise Lead→Qualified.";
-      case "book":
-        return "Add fast scheduling + SLAs; sequence follow-ups; reduce time-to-first-touch.";
-      case "show":
-        return "Double reminders/SMS; pre-demo checklist; guard calendar availability.";
-      case "prop":
-        return "Proposal templates + RevOps QA; reduce rev cycles; speed legal review.";
-      case "won":
-        return "Price packaging rules; deal review; proof points tailored by segment.";
-      default:
-        return "Local stage optimization.";
-    }
-  }
 
   const advice = (() => {
     if (C.deliveryDealsPerWeek + 1e-9 < C.demandDealsPerWeek) {
@@ -490,11 +468,11 @@ export default function ChiefOfStaffCockpit() {
           </div>
         </div>
         <p className="text-gray-600">
-          Two rows of 4 widgets + full funnel vs required, now weighted vs Prev 90d benchmarks with automatic stage focus flags.
+          Widgets + Full Funnel. Bars = <b>coverage vs capacity</b>; badges = <b>vs benchmark</b> so stages can be green/amber/red independently.
         </p>
       </motion.div>
 
-      {/* -------- Top Widgets (8 across 2 rows) -------- */}
+      {/* -------- Top Widgets (2 rows of 4) -------- */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Row 1 */}
         <Card>
@@ -533,7 +511,6 @@ export default function ChiefOfStaffCockpit() {
               {fmtNum(C.gp30OverCAC,2)}
             </div>
             <div className="text-[11px] text-gray-600">{"<3 ⇒ cash constraint"}</div>
-            <div className="text-[11px] mt-1">Δ vs prev: <DeltaTag value={dGP30} /></div>
           </CardContent>
         </Card>
 
@@ -546,7 +523,7 @@ export default function ChiefOfStaffCockpit() {
               <BarChart3 className="h-4 w-4 text-indigo-600" />
             </div>
             <div className="mt-1"><MiniBar pct={curr.qualifiedRate} /></div>
-            <div className="text-[11px] mt-1">Δ vs prev: <span className={rateDeltas.LQ >= 0 ? "text-emerald-600" : "text-red-600"}>{rateDeltas.LQ >= 0 ? "+" : ""}{pp(rateDeltas.LQ)}</span></div>
+            <div className="text-[11px] mt-1">Δ vs prev: <DeltaTag value={dQRate} /></div>
           </CardContent>
         </Card>
 
@@ -558,7 +535,7 @@ export default function ChiefOfStaffCockpit() {
               <Target className="h-4 w-4 text-indigo-600" />
             </div>
             <div className="mt-1"><MiniBar pct={curr.winRate} color="#16a34a" /></div>
-            <div className="text-[11px] mt-1">Δ vs prev: <span className={rateDeltas.PW >= 0 ? "text-emerald-600" : "text-red-600"}>{rateDeltas.PW >= 0 ? "+" : ""}{pp(rateDeltas.PW)}</span></div>
+            <div className="text-[11px] mt-1">Δ vs prev: <DeltaTag value={dWRate} /></div>
           </CardContent>
         </Card>
 
@@ -571,7 +548,6 @@ export default function ChiefOfStaffCockpit() {
           </CardContent>
         </Card>
 
-        {/* Lead Gap widget */}
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">Lead Gap (per week)</CardTitle></CardHeader>
           <CardContent className="pt-0">
@@ -585,104 +561,73 @@ export default function ChiefOfStaffCockpit() {
         </Card>
       </div>
 
-      {/* -------- Full Funnel vs Required (now benchmark-aware) -------- */}
+      {/* -------- Full Funnel: Coverage vs Required + Benchmark badges -------- */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><BarChart3 className="h-5 w-5" />Full Funnel vs Required (per week) — with Benchmark Flags</CardTitle>
+          <CardTitle className="flex items-center gap-2"><BarChart3 className="h-5 w-5" />Full Funnel (per week): Coverage vs Required + Benchmark</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {funnelRows.map((row) => {
             const widthPct = Math.min(100, (row.actual / Math.max(1e-9, row.req)) * 100);
-            const color = barColor(row.cov);
-            const badge = row.badge;
-            const rateChangeNeg = row.deltaPP < 0;
+            const color = covColor(row.cov);
+            const badge = benchBadge(row.benchRatio);
             return (
-              <div key={row.label} className={`grid grid-cols-12 items-center gap-3 rounded-lg p-2 ${badge.className}`}>
+              <div key={row.label} className="grid grid-cols-12 items-center gap-3">
                 <div className="col-span-2 text-sm font-medium">{row.label}</div>
                 <div className="col-span-6">
                   <div className="w-full h-3 rounded bg-gray-200 overflow-hidden">
                     <div className="h-3" style={{ width: `${widthPct}%`, background: color }} />
                   </div>
+                  <div className="text-[11px] text-gray-600 mt-1">Coverage: {fmtNum(row.cov * 100,1)}% of required</div>
                 </div>
-                <div className="col-span-4 text-right text-sm font-medium">
-                  {fmtNum(row.actual, 2)}/wk <span className="text-gray-600">req {fmtNum(row.req, 2)}/wk</span>
-                  {row.rateLabel !== "—" && (
-                    <div className="text-[11px]">
-                      <span className="text-gray-600">{row.rateLabel}:</span>{" "}
-                      <b>{fmtPct(row.currRate)}</b>{" "}
-                      <span className={rateChangeNeg ? "text-red-700" : "text-emerald-700"}>
-                        ({row.deltaPP >= 0 ? "+" : ""}{pp(row.deltaPP)} vs prev)
-                      </span>{" "}
-                      <span className="ml-2 inline-block rounded-full px-2 py-[1px] text-[10px] border">
-                        {badge.label}
-                      </span>
-                    </div>
-                  )}
+                <div className="col-span-4 text-right text-sm">
+                  <div className="font-medium">{fmtNum(row.actual, 2)}/wk <span className="text-gray-600">req {fmtNum(row.req, 2)}/wk</span></div>
+                  <div className="text-[11px]">{row.rateText !== "—" ? `${row.rateText}: ` : ""}{row.benchText}</div>
+                  <span className={`mt-1 inline-block rounded-full px-2 py-[2px] text-[10px] border ${badge.className}`}>{badge.label}</span>
                 </div>
               </div>
             );
           })}
           <div className="text-xs text-gray-600">
-            Coverage = Actual/wk ÷ Required/wk (color). Focus badge blends coverage shortfall (60%) and rate drop vs Prev 90d (40%). Thresholds: Healthy &lt;0.15, Watch 0.15–0.30, Critical ≥0.30.
+            Bars show **Actual/wk ÷ Required/wk** (capacity coverage). Badges show **Current vs Benchmark** (targets you set below).
+            This allows a stage to be green on volume but red on quality, or vice-versa.
           </div>
         </CardContent>
       </Card>
 
-      {/* -------- Stage Focus (Top Risks) -------- */}
+      {/* -------- Stage Focus (Top Benchmark Risks) -------- */}
       <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5" />Stage Focus (Top Risks)</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5" />Stage Focus (vs Benchmark)</CardTitle></CardHeader>
         <CardContent className="grid md:grid-cols-2 gap-4">
-          {riskRows.map((r) => (
-            <div key={r.key} className="rounded-xl border p-3">
-              <div className="flex items-center justify-between">
-                <div className="font-medium">{r.label}</div>
-                <span className={`rounded-full px-2 py-[2px] text-[10px] ${r.badge.className}`}>{r.badge.label}</span>
+          {benchRisks.map((r) => {
+            const b = benchBadge(r.benchRatio);
+            return (
+              <div key={r.key} className="rounded-xl border p-3">
+                <div className="flex items-center justify-between">
+                  <div className="font-medium">{r.label}</div>
+                  <span className={`rounded-full px-2 py-[2px] text-[10px] ${b.className}`}>{b.label}</span>
+                </div>
+                <div className="text-sm mt-1">{r.rateText !== "—" ? r.rateText + ":" : "—"} <b>{r.benchText}</b></div>
+                <div className="text-sm">Coverage: <b>{fmtNum((r.cov) * 100,1)}%</b> of required</div>
+                <div className="text-xs text-gray-600 mt-1">
+                  {r.key === "won" && "Levers: deal review, pricing guardrails, segment-specific proof points, MEDDICC hygiene."}
+                  {r.key === "qual" && "Levers: ICP gating, enrichment, routing SLA, messaging/LP alignment."}
+                  {r.key === "book" && "Levers: instant scheduling, auto-sequences, time-to-first-touch."}
+                  {r.key === "show" && "Levers: reminders/SMS, pre-demo checklist, calendar coverage."}
+                  {r.key === "prop" && "Levers: proposal templates, RevOps QA, faster legal loops."}
+                </div>
               </div>
-              <div className="text-sm mt-1">
-                Rate: <b>{fmtPct(r.currRate)}</b>{" "}
-                <span className={r.deltaPP < 0 ? "text-red-700" : "text-emerald-700"}>
-                  ({r.deltaPP >= 0 ? "+" : ""}{pp(r.deltaPP)} vs prev)
-                </span>
-              </div>
-              <div className="text-sm">Coverage: <b>{fmtNum((r.cov)*100,1)}%</b> of required</div>
-              <div className="text-xs text-gray-600 mt-1">Lever: {leverFor(r.key)}</div>
-            </div>
-          ))}
+            );
+          })}
         </CardContent>
       </Card>
 
-      {/* -------- Lead Gap & Prescription -------- */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card>
-          <CardHeader><CardTitle className="flex items-center gap-2"><TrendingUp className="h-5 w-5" />Lead Gap (to fill Delivery)</CardTitle></CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            <div>Required leads/wk: <b>{fmtNum(C.reqLeadsPerWeek,1)}</b></div>
-            <div>Actual leads/wk: <b>{fmtNum(C.leadsPerWeek,1)}</b></div>
-            <div className={`rounded-lg p-2 ${C.leadGapPerWeek > 0 ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>
-              {C.leadGapPerWeek > 0
-                ? `Short by ~${fmtNum(C.leadGapPerWeek,1)} leads/wk to saturate Delivery.`
-                : "Lead supply is sufficient to saturate Delivery."}
-            </div>
-            <div className="text-[11px] text-gray-600">Raising Qualified% or Win% reduces the required lead volume fastest.</div>
-          </CardContent>
-        </Card>
-
-        <Card className="md:col-span-2">
-          <CardHeader><CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5" />Prescription</CardTitle></CardHeader>
-          <CardContent>
-            <ul className="list-disc pl-5 text-sm space-y-1">
-              {advice.map((a, i) => <li key={i}>{a}</li>)}
-            </ul>
-            <div className="text-[11px] text-gray-500 mt-2">Order: Exploit → Subordinate → Elevate. Show the math before hiring.</div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* -------- Inputs (Current vs Prev 90d) -------- */}
+      {/* -------- Inputs (Current vs Prev) + Benchmarks -------- */}
       <Tabs defaultValue="current" className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
+        <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="current">Current 90d Inputs</TabsTrigger>
           <TabsTrigger value="prev">Prev 90d (Baseline)</TabsTrigger>
+          <TabsTrigger value="bench">Benchmarks</TabsTrigger>
         </TabsList>
 
         {/* Current */}
@@ -730,38 +675,69 @@ export default function ChiefOfStaffCockpit() {
         <TabsContent value="prev">
           <Card>
             <CardHeader><CardTitle className="flex items-center gap-2"><Activity className="h-5 w-5" />Prev 90d (Baseline) Inputs</CardTitle></CardHeader>
+          <CardContent className="grid md:grid-cols-2 gap-6">
+            {/* Commercial & Sales */}
+            <div>
+              <div className="font-medium mb-2">Commercial & Sales</div>
+              <div className="grid grid-cols-2 gap-3 items-center text-sm">
+                <Label>Window (days)</Label><Input type="number" value={prev.days} onChange={(e) => setPrev({ ...prev, days: parseInt(e.target.value || "0", 10) })} />
+                <Label>Leads (90d)</Label><Input type="number" value={prev.leads90} onChange={(e) => setPrev({ ...prev, leads90: parseInt(e.target.value || "0", 10) })} />
+                <Label>Lead → Qualified</Label><PercentInput value={prev.qualifiedRate} onChange={(v) => setPrev({ ...prev, qualifiedRate: v })} />
+                <Label>Qualified → Booked</Label><PercentInput value={prev.bookRate} onChange={(v) => setPrev({ ...prev, bookRate: v })} />
+                <Label>Booked → Show</Label><PercentInput value={prev.showRate} onChange={(v) => setPrev({ ...prev, showRate: v })} />
+                <Label>Show → Proposal</Label><PercentInput value={prev.proposalRate} onChange={(v) => setPrev({ ...prev, proposalRate: v })} />
+                <Label>Proposal → Won</Label><PercentInput value={prev.winRate} onChange={(v) => setPrev({ ...prev, winRate: v })} />
+                <Label>ASP (€)</Label><DecimalInput value={prev.aspEUR} onChange={(v) => setPrev({ ...prev, aspEUR: v })} />
+                <Label>Gross Margin</Label><PercentInput value={prev.gm} onChange={(v) => setPrev({ ...prev, gm: v })} />
+                <Label>Sales Cycle (days)</Label><Input type="number" value={prev.salesCycleDays} onChange={(e) => setPrev({ ...prev, salesCycleDays: parseInt(e.target.value || "0", 10) })} />
+                <Label>No-Show Rate</Label><PercentInput value={prev.noShowRate} onChange={(v) => setPrev({ ...prev, noShowRate: v })} />
+              </div>
+            </div>
+
+            {/* Delivery & Cash */}
+            <div>
+              <div className="font-medium mb-2">Delivery, Product & Cash</div>
+              <div className="grid grid-cols-2 gap-3 items-center text-sm">
+                <Label>Onboardings / week</Label><DecimalInput value={prev.onboardingsPerWeek} onChange={(v) => setPrev({ ...prev, onboardingsPerWeek: v })} />
+                <Label>Onboarding Days (avg)</Label><Input type="number" value={prev.onboardingDaysAvg} onChange={(e) => setPrev({ ...prev, onboardingDaysAvg: parseInt(e.target.value || "0", 10) })} />
+                <Label>Active Forwarders</Label><Input type="number" value={prev.activeForwarders} onChange={(e) => setPrev({ ...prev, activeForwarders: parseInt(e.target.value || "0", 10) })} />
+                <Label>Active Airlines</Label><Input type="number" value={prev.activeAirlines} onChange={(e) => setPrev({ ...prev, activeAirlines: parseInt(e.target.value || "0", 10) })} />
+                <Label>CAC (€)</Label><DecimalInput value={prev.CAC} onChange={(v) => setPrev({ ...prev, CAC: v })} />
+                <Label>Payback (days)</Label><Input type="number" value={prev.paybackDays} onChange={(e) => setPrev({ ...prev, paybackDays: parseInt(e.target.value || "0", 10) })} />
+                <Label>DSO (days)</Label><Input type="number" value={prev.DSO} onChange={(e) => setPrev({ ...prev, DSO: parseInt(e.target.value || "0", 10) })} />
+                <Label>Headcount</Label><Input type="number" value={prev.headcount} onChange={(e) => setPrev({ ...prev, headcount: parseInt(e.target.value || "0", 10) })} />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        </TabsContent>
+
+        {/* Benchmarks */}
+        <TabsContent value="bench">
+          <Card>
+            <CardHeader><CardTitle className="flex items-center gap-2"><Target className="h-5 w-5" />Benchmarks / Targets</CardTitle></CardHeader>
             <CardContent className="grid md:grid-cols-2 gap-6">
-              {/* Commercial & Sales */}
               <div>
-                <div className="font-medium mb-2">Commercial & Sales</div>
+                <div className="font-medium mb-2">Volume</div>
                 <div className="grid grid-cols-2 gap-3 items-center text-sm">
-                  <Label>Window (days)</Label><Input type="number" value={prev.days} onChange={(e) => setPrev({ ...prev, days: parseInt(e.target.value || "0", 10) })} />
-                  <Label>Leads (90d)</Label><Input type="number" value={prev.leads90} onChange={(e) => setPrev({ ...prev, leads90: parseInt(e.target.value || "0", 10) })} />
-                  <Label>Lead → Qualified</Label><PercentInput value={prev.qualifiedRate} onChange={(v) => setPrev({ ...prev, qualifiedRate: v })} />
-                  <Label>Qualified → Booked</Label><PercentInput value={prev.bookRate} onChange={(v) => setPrev({ ...prev, bookRate: v })} />
-                  <Label>Booked → Show</Label><PercentInput value={prev.showRate} onChange={(v) => setPrev({ ...prev, showRate: v })} />
-                  <Label>Show → Proposal</Label><PercentInput value={prev.proposalRate} onChange={(v) => setPrev({ ...prev, proposalRate: v })} />
-                  <Label>Proposal → Won</Label><PercentInput value={prev.winRate} onChange={(v) => setPrev({ ...prev, winRate: v })} />
-                  <Label>ASP (€)</Label><DecimalInput value={prev.aspEUR} onChange={(v) => setPrev({ ...prev, aspEUR: v })} />
-                  <Label>Gross Margin</Label><PercentInput value={prev.gm} onChange={(v) => setPrev({ ...prev, gm: v })} />
-                  <Label>Sales Cycle (days)</Label><Input type="number" value={prev.salesCycleDays} onChange={(e) => setPrev({ ...prev, salesCycleDays: parseInt(e.target.value || "0", 10) })} />
-                  <Label>No-Show Rate</Label><PercentInput value={prev.noShowRate} onChange={(v) => setPrev({ ...prev, noShowRate: v })} />
+                  <Label>Leads Target (90d)</Label>
+                  <Input type="number" value={bench.leads90}
+                    onChange={(e) => setBench({ ...bench, leads90: parseInt(e.target.value || "0", 10) })} />
                 </div>
               </div>
-
-              {/* Delivery & Cash */}
               <div>
-                <div className="font-medium mb-2">Delivery, Product & Cash</div>
+                <div className="font-medium mb-2">Conversion Targets</div>
                 <div className="grid grid-cols-2 gap-3 items-center text-sm">
-                  <Label>Onboardings / week</Label><DecimalInput value={prev.onboardingsPerWeek} onChange={(v) => setPrev({ ...prev, onboardingsPerWeek: v })} />
-                  <Label>Onboarding Days (avg)</Label><Input type="number" value={prev.onboardingDaysAvg} onChange={(e) => setPrev({ ...prev, onboardingDaysAvg: parseInt(e.target.value || "0", 10) })} />
-                  <Label>Active Forwarders</Label><Input type="number" value={prev.activeForwarders} onChange={(e) => setPrev({ ...prev, activeForwarders: parseInt(e.target.value || "0", 10) })} />
-                  <Label>Active Airlines</Label><Input type="number" value={prev.activeAirlines} onChange={(e) => setPrev({ ...prev, activeAirlines: parseInt(e.target.value || "0", 10) })} />
-                  <Label>CAC (€)</Label><DecimalInput value={prev.CAC} onChange={(v) => setPrev({ ...prev, CAC: v })} />
-                  <Label>Payback (days)</Label><Input type="number" value={prev.paybackDays} onChange={(e) => setPrev({ ...prev, paybackDays: parseInt(e.target.value || "0", 10) })} />
-                  <Label>DSO (days)</Label><Input type="number" value={prev.DSO} onChange={(e) => setPrev({ ...prev, DSO: parseInt(e.target.value || "0", 10) })} />
-                  <Label>Headcount</Label><Input type="number" value={prev.headcount} onChange={(e) => setPrev({ ...prev, headcount: parseInt(e.target.value || "0", 10) })} />
+                  <Label>Lead → Qualified</Label><PercentInput value={bench.qualifiedRate} onChange={(v) => setBench({ ...bench, qualifiedRate: v })} />
+                  <Label>Qualified → Booked</Label><PercentInput value={bench.bookRate} onChange={(v) => setBench({ ...bench, bookRate: v })} />
+                  <Label>Booked → Show</Label><PercentInput value={bench.showRate} onChange={(v) => setBench({ ...bench, showRate: v })} />
+                  <Label>Show → Proposal</Label><PercentInput value={bench.proposalRate} onChange={(v) => setBench({ ...bench, proposalRate: v })} />
+                  <Label>Proposal → Won</Label><PercentInput value={bench.winRate} onChange={(v) => setBench({ ...bench, winRate: v })} />
                 </div>
+              </div>
+              <div className="text-xs text-gray-600 md:col-span-2">
+                Tip: leave these equal to Prev 90d to use last period as your benchmark, or set OKRs here (e.g., Win% = 35%).
+                Badges: <b>Green ≥100%</b>, <b>Amber 95–99%</b>, <b>Red &lt;95%</b> of target.
               </div>
             </CardContent>
           </Card>
@@ -769,8 +745,7 @@ export default function ChiefOfStaffCockpit() {
       </Tabs>
 
       <p className="text-[11px] text-gray-500">
-        Coverage color = Actual/wk ÷ Required/wk. Focus blends coverage (60%) and rate drop vs Prev 90d (40%).
-        GP30/CAC &lt; 3 ⇒ treat cash as a constraint.
+        Bars = capacity coverage; badges = benchmark attainment. This lets you see “Add more leads?” vs “Fix conversion quality?” instantly.
       </p>
     </main>
   );
