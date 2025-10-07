@@ -28,6 +28,7 @@ const fmtNum = (n: number, d = 0) =>
 const fmtPct = (n: number) => `${(safe(n, 0) * 100).toFixed(2)}%`;
 const eur = (n: number, d = 0) =>
   new Intl.NumberFormat("en-IE", { style: "currency", currency: "EUR", maximumFractionDigits: d }).format(safe(n, 0));
+const pp = (n: number) => `${(n * 100).toFixed(1)} pp`;
 
 function DecimalInput({
   value,
@@ -224,10 +225,10 @@ function computeKPIs(inp: CoSInputs) {
 
   // Required per week at each stage to saturate Delivery
   const reqWon = delPerWeek; // assume all onboarded were won
-  const reqProp = downFromProp > 0 ? reqWon / rPW : 0;
-  const reqShow = downFromShow > 0 ? reqWon / (rSP * rPW) : 0;
-  const reqBook = downFromBook > 0 ? reqWon / (rBS * rSP * rPW) : 0;
-  const reqQual = downFromQual > 0 ? reqWon / (rQB * rBS * rSP * rPW) : 0;
+  const reqProp = rPW > 0 ? reqWon / rPW : 0;
+  const reqShow = rSP * rPW > 0 ? reqWon / (rSP * rPW) : 0;
+  const reqBook = rBS * rSP * rPW > 0 ? reqWon / (rBS * rSP * rPW) : 0;
+  const reqQual = rQB * rBS * rSP * rPW > 0 ? reqWon / (rQB * rBS * rSP * rPW) : 0;
   const reqLead = downFromLead > 0 ? reqWon / downFromLead : 0;
 
   // Demand vs Delivery ceiling
@@ -305,7 +306,7 @@ export default function ChiefOfStaffCockpit() {
   const C = useMemo(() => computeKPIs(curr), [curr]);
   const P = useMemo(() => computeKPIs(prev), [prev]);
 
-  // deltas vs baseline
+  // deltas vs baseline (top widgets)
   const dGP90 = deltaPct(C.gp90, P.gp90);
   const dRfte = deltaPct(C.rfteCeil, P.rfteCeil);
   const dGP30 = deltaPct(C.gp30OverCAC, P.gp30OverCAC);
@@ -320,14 +321,146 @@ export default function ChiefOfStaffCockpit() {
     setPrev(PREV.inputs);
   };
 
-  // coverage per stage (actual / required)
+  // Stage coverage (actual / required)
   const covLead = C.reqLead > 0 ? C.leadsPerWeek / C.reqLead : 0;
   const covQual = C.reqQual > 0 ? C.qualPerWeek / C.reqQual : 0;
   const covBook = C.reqBook > 0 ? C.bookPerWeek / C.reqBook : 0;
   const covShow = C.reqShow > 0 ? C.showPerWeek / C.reqShow : 0;
   const covProp = C.reqProp > 0 ? C.propPerWeek / C.reqProp : 0;
   const covWon  = C.reqWon  > 0 ? C.wonPerWeek  / C.reqWon  : 0;
-  const covOnb  = 1; // delivery is the requirement anchor
+
+  // Benchmark deltas (curr vs prev) by stage rate (pp = percentage points)
+  const rateDeltas = {
+    LQ: curr.qualifiedRate - prev.qualifiedRate,
+    QB: curr.bookRate - prev.bookRate,
+    BS: curr.showRate - prev.showRate,
+    SP: curr.proposalRate - prev.proposalRate,
+    PW: curr.winRate - prev.winRate,
+  };
+
+  // Focus index blends coverage gap + rate deterioration
+  // focusIndex = 0 (healthy) → 1+ (critical)
+  function focusIndex(coverage: number, currRate: number, prevRate: number) {
+    const covGap = Math.max(0, 1 - coverage); // 0..∞
+    const rateDropRel = prevRate > 0 ? Math.max(0, (prevRate - currRate) / prevRate) : 0; // 0..1+
+    // Weighting: 60% coverage, 40% rate drop
+    return 0.6 * covGap + 0.4 * rateDropRel;
+  }
+
+  function focusBadge(fi: number) {
+    if (fi >= 0.30) return { label: "Critical", className: "bg-red-100 text-red-700 border border-red-200" };
+    if (fi >= 0.15) return { label: "Watch", className: "bg-amber-100 text-amber-700 border border-amber-200" };
+    return { label: "Healthy", className: "bg-emerald-100 text-emerald-700 border border-emerald-200" };
+  }
+
+  // Build rows for the Full Funnel table with benchmark awareness
+  const funnelRows = [
+    {
+      key: "leads",
+      label: "Leads",
+      actual: C.leadsPerWeek,
+      req: C.reqLead,
+      cov: covLead,
+      rateLabel: "—",
+      currRate: 1,
+      prevRate: 1,
+      deltaPP: 0,
+    },
+    {
+      key: "qual",
+      label: "Qualified",
+      actual: C.qualPerWeek,
+      req: C.reqQual,
+      cov: covQual,
+      rateLabel: "Lead→Qualified",
+      currRate: curr.qualifiedRate,
+      prevRate: prev.qualifiedRate,
+      deltaPP: rateDeltas.LQ,
+    },
+    {
+      key: "book",
+      label: "Booked",
+      actual: C.bookPerWeek,
+      req: C.reqBook,
+      cov: covBook,
+      rateLabel: "Qualified→Booked",
+      currRate: curr.bookRate,
+      prevRate: prev.bookRate,
+      deltaPP: rateDeltas.QB,
+    },
+    {
+      key: "show",
+      label: "Show",
+      actual: C.showPerWeek,
+      req: C.reqShow,
+      cov: covShow,
+      rateLabel: "Booked→Show",
+      currRate: curr.showRate,
+      prevRate: prev.showRate,
+      deltaPP: rateDeltas.BS,
+    },
+    {
+      key: "prop",
+      label: "Proposal",
+      actual: C.propPerWeek,
+      req: C.reqProp,
+      cov: covProp,
+      rateLabel: "Show→Proposal",
+      currRate: curr.proposalRate,
+      prevRate: prev.proposalRate,
+      deltaPP: rateDeltas.SP,
+    },
+    {
+      key: "won",
+      label: "Won",
+      actual: C.wonPerWeek,
+      req: C.reqWon,
+      cov: covWon,
+      rateLabel: "Proposal→Won",
+      currRate: curr.winRate,
+      prevRate: prev.winRate,
+      deltaPP: rateDeltas.PW,
+    },
+    {
+      key: "onb",
+      label: "Onboarded",
+      actual: C.delPerWeek,
+      req: C.delPerWeek,
+      cov: 1,
+      rateLabel: "—",
+      currRate: 1,
+      prevRate: 1,
+      deltaPP: 0,
+    },
+  ].map((r) => {
+    const fi = focusIndex(r.cov, r.currRate, r.prevRate);
+    const badge = focusBadge(fi);
+    return { ...r, fi, badge };
+  });
+
+  // Top risks for Stage Focus card (exclude Leads/Onboarded)
+  const riskRows = funnelRows
+    .filter((r) => ["qual", "book", "show", "prop", "won"].includes(r.key))
+    .sort((a, b) => b.fi - a.fi)
+    .slice(0, 2);
+
+  // Simple lever text by stage
+  function leverFor(key: string) {
+    switch (key) {
+      case "qual":
+        return "Tighten ICP + forms; route faster to SDR; enrich for fit → raise Lead→Qualified.";
+      case "book":
+        return "Add fast scheduling + SLAs; sequence follow-ups; reduce time-to-first-touch.";
+      case "show":
+        return "Double reminders/SMS; pre-demo checklist; guard calendar availability.";
+      case "prop":
+        return "Proposal templates + RevOps QA; reduce rev cycles; speed legal review.";
+      case "won":
+        return "Price packaging rules; deal review; proof points tailored by segment.";
+      default:
+        return "Local stage optimization.";
+    }
+  }
 
   const advice = (() => {
     if (C.deliveryDealsPerWeek + 1e-9 < C.demandDealsPerWeek) {
@@ -356,7 +489,9 @@ export default function ChiefOfStaffCockpit() {
             </Button>
           </div>
         </div>
-        <p className="text-gray-600">Two rows of 4 widgets + full funnel vs required to saturate Delivery. Edit Current vs Prev 90d below.</p>
+        <p className="text-gray-600">
+          Two rows of 4 widgets + full funnel vs required, now weighted vs Prev 90d benchmarks with automatic stage focus flags.
+        </p>
       </motion.div>
 
       {/* -------- Top Widgets (8 across 2 rows) -------- */}
@@ -411,7 +546,7 @@ export default function ChiefOfStaffCockpit() {
               <BarChart3 className="h-4 w-4 text-indigo-600" />
             </div>
             <div className="mt-1"><MiniBar pct={curr.qualifiedRate} /></div>
-            <div className="text-[11px] mt-1">Δ vs prev: <DeltaTag value={dQRate} /></div>
+            <div className="text-[11px] mt-1">Δ vs prev: <span className={rateDeltas.LQ >= 0 ? "text-emerald-600" : "text-red-600"}>{rateDeltas.LQ >= 0 ? "+" : ""}{pp(rateDeltas.LQ)}</span></div>
           </CardContent>
         </Card>
 
@@ -423,7 +558,7 @@ export default function ChiefOfStaffCockpit() {
               <Target className="h-4 w-4 text-indigo-600" />
             </div>
             <div className="mt-1"><MiniBar pct={curr.winRate} color="#16a34a" /></div>
-            <div className="text-[11px] mt-1">Δ vs prev: <DeltaTag value={dWRate} /></div>
+            <div className="text-[11px] mt-1">Δ vs prev: <span className={rateDeltas.PW >= 0 ? "text-emerald-600" : "text-red-600"}>{rateDeltas.PW >= 0 ? "+" : ""}{pp(rateDeltas.PW)}</span></div>
           </CardContent>
         </Card>
 
@@ -436,7 +571,7 @@ export default function ChiefOfStaffCockpit() {
           </CardContent>
         </Card>
 
-        {/* NEW: Lead Gap widget to keep 8 total */}
+        {/* Lead Gap widget */}
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">Lead Gap (per week)</CardTitle></CardHeader>
           <CardContent className="pt-0">
@@ -450,40 +585,69 @@ export default function ChiefOfStaffCockpit() {
         </Card>
       </div>
 
-      {/* -------- Full Funnel vs Required (color-coded) -------- */}
+      {/* -------- Full Funnel vs Required (now benchmark-aware) -------- */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><BarChart3 className="h-5 w-5" />Full Funnel vs Required (per week)</CardTitle>
+          <CardTitle className="flex items-center gap-2"><BarChart3 className="h-5 w-5" />Full Funnel vs Required (per week) — with Benchmark Flags</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {[
-            { label: "Leads", actual: C.leadsPerWeek, req: C.reqLead, cov: covLead },
-            { label: "Qualified", actual: C.qualPerWeek, req: C.reqQual, cov: covQual },
-            { label: "Booked", actual: C.bookPerWeek, req: C.reqBook, cov: covBook },
-            { label: "Show", actual: C.showPerWeek, req: C.reqShow, cov: covShow },
-            { label: "Proposal", actual: C.propPerWeek, req: C.reqProp, cov: covProp },
-            { label: "Won", actual: C.wonPerWeek, req: C.reqWon, cov: covWon },
-            { label: "Onboarded", actual: C.delPerWeek, req: C.delPerWeek, cov: covOnb },
-          ].map((row) => {
+          {funnelRows.map((row) => {
             const widthPct = Math.min(100, (row.actual / Math.max(1e-9, row.req)) * 100);
             const color = barColor(row.cov);
+            const badge = row.badge;
+            const rateChangeNeg = row.deltaPP < 0;
             return (
-              <div key={row.label} className="grid grid-cols-12 items-center gap-3">
-                <div className="col-span-2 text-sm">{row.label}</div>
-                <div className="col-span-8">
+              <div key={row.label} className={`grid grid-cols-12 items-center gap-3 rounded-lg p-2 ${badge.className}`}>
+                <div className="col-span-2 text-sm font-medium">{row.label}</div>
+                <div className="col-span-6">
                   <div className="w-full h-3 rounded bg-gray-200 overflow-hidden">
                     <div className="h-3" style={{ width: `${widthPct}%`, background: color }} />
                   </div>
                 </div>
-                <div className="col-span-2 text-right text-sm font-medium">
-                  {fmtNum(row.actual, 2)}/wk <span className="text-gray-500">req {fmtNum(row.req, 2)}/wk</span>
+                <div className="col-span-4 text-right text-sm font-medium">
+                  {fmtNum(row.actual, 2)}/wk <span className="text-gray-600">req {fmtNum(row.req, 2)}/wk</span>
+                  {row.rateLabel !== "—" && (
+                    <div className="text-[11px]">
+                      <span className="text-gray-600">{row.rateLabel}:</span>{" "}
+                      <b>{fmtPct(row.currRate)}</b>{" "}
+                      <span className={rateChangeNeg ? "text-red-700" : "text-emerald-700"}>
+                        ({row.deltaPP >= 0 ? "+" : ""}{pp(row.deltaPP)} vs prev)
+                      </span>{" "}
+                      <span className="ml-2 inline-block rounded-full px-2 py-[1px] text-[10px] border">
+                        {badge.label}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             );
           })}
           <div className="text-xs text-gray-600">
-            Color = Actual/wk ÷ Required/wk: green ≥ 100%, amber 80–99%, red &lt; 80%. Required is back-solved from Delivery capacity and downstream conversion.
+            Coverage = Actual/wk ÷ Required/wk (color). Focus badge blends coverage shortfall (60%) and rate drop vs Prev 90d (40%). Thresholds: Healthy &lt;0.15, Watch 0.15–0.30, Critical ≥0.30.
           </div>
+        </CardContent>
+      </Card>
+
+      {/* -------- Stage Focus (Top Risks) -------- */}
+      <Card>
+        <CardHeader><CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5" />Stage Focus (Top Risks)</CardTitle></CardHeader>
+        <CardContent className="grid md:grid-cols-2 gap-4">
+          {riskRows.map((r) => (
+            <div key={r.key} className="rounded-xl border p-3">
+              <div className="flex items-center justify-between">
+                <div className="font-medium">{r.label}</div>
+                <span className={`rounded-full px-2 py-[2px] text-[10px] ${r.badge.className}`}>{r.badge.label}</span>
+              </div>
+              <div className="text-sm mt-1">
+                Rate: <b>{fmtPct(r.currRate)}</b>{" "}
+                <span className={r.deltaPP < 0 ? "text-red-700" : "text-emerald-700"}>
+                  ({r.deltaPP >= 0 ? "+" : ""}{pp(r.deltaPP)} vs prev)
+                </span>
+              </div>
+              <div className="text-sm">Coverage: <b>{fmtNum((r.cov)*100,1)}%</b> of required</div>
+              <div className="text-xs text-gray-600 mt-1">Lever: {leverFor(r.key)}</div>
+            </div>
+          ))}
         </CardContent>
       </Card>
 
@@ -509,7 +673,7 @@ export default function ChiefOfStaffCockpit() {
             <ul className="list-disc pl-5 text-sm space-y-1">
               {advice.map((a, i) => <li key={i}>{a}</li>)}
             </ul>
-            <div className="text-[11px] text-gray-500 mt-2">Order of ops: Exploit → Subordinate → Elevate. Show the math before hiring.</div>
+            <div className="text-[11px] text-gray-500 mt-2">Order: Exploit → Subordinate → Elevate. Show the math before hiring.</div>
           </CardContent>
         </Card>
       </div>
@@ -605,7 +769,7 @@ export default function ChiefOfStaffCockpit() {
       </Tabs>
 
       <p className="text-[11px] text-gray-500">
-        Required per stage is back-solved from onboarding capacity and downstream conversion. Color thresholds: green ≥ 100%, amber 80–99%, red &lt; 80%.
+        Coverage color = Actual/wk ÷ Required/wk. Focus blends coverage (60%) and rate drop vs Prev 90d (40%).
         GP30/CAC &lt; 3 ⇒ treat cash as a constraint.
       </p>
     </main>
