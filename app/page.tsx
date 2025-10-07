@@ -128,6 +128,16 @@ function DeltaTag({ value }: { value: number | null }) {
   );
 }
 
+function minKey<T extends Record<string, number>>(obj: T): { key: keyof T; value: number } {
+  let mk: keyof T = Object.keys(obj)[0] as keyof T;
+  let mv = Infinity;
+  for (const k of Object.keys(obj) as (keyof T)[]) {
+    const v = obj[k] as number;
+    if (Number.isFinite(v) && v < mv) { mv = v; mk = k; }
+  }
+  return { key: mk, value: mv };
+}
+
 /* ---------------- Data shapes ---------------- */
 type CoSInputs = {
   days: number;
@@ -271,12 +281,14 @@ function computeKPIs(inp: CoSInputs) {
     propPerWeek,
     wonPerWeek,
     delPerWeek,
+
     reqLead,
     reqQual,
     reqBook,
     reqShow,
     reqProp,
     reqWon,
+
     demandDealsPerWeek,
     deliveryDealsPerWeek,
     dealsPerWeekCeil,
@@ -319,7 +331,28 @@ export default function ChiefOfStaffCockpit() {
   const spBenchRatio = bench.proposalRate > 0 ? curr.proposalRate / bench.proposalRate : NaN;
   const pwBenchRatio = bench.winRate > 0 ? curr.winRate / bench.winRate : NaN;
 
-  // Impact simulation
+  // Demand-stage coverage (actual / required to saturate delivery)
+  const demandCoverage = {
+    "Leads": C.reqLead > 0 ? C.leadsPerWeek / C.reqLead : Infinity,
+    "Lead→Qualified": C.reqQual > 0 ? C.qualPerWeek / C.reqQual : Infinity,
+    "Qualified→Booked": C.reqBook > 0 ? C.bookPerWeek / C.reqBook : Infinity,
+    "Booked→Show": C.reqShow > 0 ? C.showPerWeek / C.reqShow : Infinity,
+    "Show→Proposal": C.reqProp > 0 ? C.propPerWeek / C.reqProp : Infinity,
+    "Proposal→Won": C.reqWon > 0 ? C.wonPerWeek / C.reqWon : Infinity,
+  } as const;
+  const { key: demandStage, value: demandStageCoverage } = minKey(demandCoverage);
+  const isDeliveryConstrained = C.deliveryDealsPerWeek + 1e-9 < C.demandDealsPerWeek;
+
+  /* -------- Funnel rows for visual -------- */
+  const funnelRows = [
+    { key: "leads", label: "Leads", ratio: leadsBenchRatio, text: `${fmtNum(curr.leads90)} vs ${fmtNum(bench.leads90)} (${(leadsBenchRatio * 100).toFixed(0)}%)`, rateText: "—" },
+    { key: "qual", label: "Qualified", ratio: lqBenchRatio, text: `${fmtPct(curr.qualifiedRate)} vs ${fmtPct(bench.qualifiedRate)} (${(lqBenchRatio * 100).toFixed(0)}%)`, rateText: "Lead→Qualified" },
+    { key: "book", label: "Booked", ratio: qbBenchRatio, text: `${fmtPct(curr.bookRate)} vs ${fmtPct(bench.bookRate)} (${(qbBenchRatio * 100).toFixed(0)}%)`, rateText: "Qualified→Booked" },
+    { key: "show", label: "Show", ratio: bsBenchRatio, text: `${fmtPct(curr.showRate)} vs ${fmtPct(bench.showRate)} (${(bsBenchRatio * 100).toFixed(0)}%)`, rateText: "Booked→Show" },
+    { key: "prop", label: "Proposal", ratio: spBenchRatio, text: `${fmtPct(curr.proposalRate)} vs ${fmtPct(bench.proposalRate)} (${(spBenchRatio * 100).toFixed(0)}%)`, rateText: "Show→Proposal" },
+    { key: "won", label: "Won", ratio: pwBenchRatio, text: `${fmtPct(curr.winRate)} vs ${fmtPct(bench.winRate)} (${(pwBenchRatio * 100).toFixed(0)}%)`, rateText: "Proposal→Won" },
+  ].map((r) => ({ ...r, badge: benchBadge(r.ratio), impact: impactForStage(r.key as any) }));
+
   function simulateWith(target: Partial<CoSInputs>) {
     const sim: CoSInputs = { ...curr, ...target };
     const S = computeKPIs(sim);
@@ -356,31 +389,46 @@ export default function ChiefOfStaffCockpit() {
     }
   }
 
-  const funnelRows = [
-    { key: "leads", label: "Leads", ratio: leadsBenchRatio, text: `${fmtNum(curr.leads90)} vs ${fmtNum(bench.leads90)} (${(leadsBenchRatio * 100).toFixed(0)}%)`, rateText: "—" },
-    { key: "qual", label: "Qualified", ratio: lqBenchRatio, text: `${fmtPct(curr.qualifiedRate)} vs ${fmtPct(bench.qualifiedRate)} (${(lqBenchRatio * 100).toFixed(0)}%)`, rateText: "Lead→Qualified" },
-    { key: "book", label: "Booked", ratio: qbBenchRatio, text: `${fmtPct(curr.bookRate)} vs ${fmtPct(bench.bookRate)} (${(qbBenchRatio * 100).toFixed(0)}%)`, rateText: "Qualified→Booked" },
-    { key: "show", label: "Show", ratio: bsBenchRatio, text: `${fmtPct(curr.showRate)} vs ${fmtPct(bench.showRate)} (${(bsBenchRatio * 100).toFixed(0)}%)`, rateText: "Booked→Show" },
-    { key: "prop", label: "Proposal", ratio: spBenchRatio, text: `${fmtPct(curr.proposalRate)} vs ${fmtPct(bench.proposalRate)} (${(spBenchRatio * 100).toFixed(0)}%)`, rateText: "Show→Proposal" },
-    { key: "won", label: "Won", ratio: pwBenchRatio, text: `${fmtPct(curr.winRate)} vs ${fmtPct(bench.winRate)} (${(pwBenchRatio * 100).toFixed(0)}%)`, rateText: "Proposal→Won" },
-  ].map((r) => ({ ...r, badge: benchBadge(r.ratio), impact: impactForStage(r.key as any) }));
-
   const topImpacts = [...funnelRows].sort((a, b) => b.impact.deltaGP90 - a.impact.deltaGP90).slice(0, 2);
 
   return (
     <main className="mx-auto max-w-7xl p-6 space-y-6">
-      {/* Header */}
+      {/* Header area (page controls) */}
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
         <div className="flex items-center justify-between gap-3 flex-wrap">
-          <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">Chief of Staff Cockpit — Cargo.one</h1>
+          <h2 className="text-xl md:text-2xl font-semibold tracking-tight">⚡ Throughput Funnel Analysis</h2>
           <div className="flex items-center gap-2">
             <Button onClick={loadPresets} className="flex items-center gap-2">
               <Database className="h-4 w-4" /> Load example data
             </Button>
           </div>
         </div>
-        <p className="text-gray-600">
-          Benchmark-aware funnel (left bars match targets), plus estimated 90-day GP impact for the weakest stages.
+
+        {/* Dynamic Constraint Banner (subtitle) */}
+        <div className="mt-3 rounded-lg border bg-gray-50 px-4 py-3">
+          {isDeliveryConstrained ? (
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div className="text-sm md:text-base font-medium">
+                Current bottleneck: <span className="text-red-700">Delivery (Onboarding)</span>
+              </div>
+              <div className="text-xs text-gray-600">
+                Demand {fmtNum(C.demandDealsPerWeek,2)}/wk vs Delivery {fmtNum(C.deliveryDealsPerWeek,2)}/wk
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div className="text-sm md:text-base font-medium">
+                Current bottleneck: <span className="text-amber-700">Demand — {String(demandStage)}</span>
+              </div>
+              <div className="text-xs text-gray-600">
+                Coverage at weakest demand stage: {(Math.max(0, Math.min(1e3, demandStageCoverage)) * 100).toFixed(0)}%
+              </div>
+            </div>
+          )}
+        </div>
+
+        <p className="text-gray-600 mt-2">
+          Benchmark-aware funnel, constraint detection (live), and estimated 90-day GP impact for the weakest stages.
         </p>
       </motion.div>
 
@@ -390,10 +438,12 @@ export default function ChiefOfStaffCockpit() {
           <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">Constraint</CardTitle></CardHeader>
           <CardContent className="pt-0">
             <div className="text-base font-semibold">
-              {C.deliveryDealsPerWeek + 1e-9 < C.demandDealsPerWeek ? "Delivery (Onboarding)" : "Demand (Leads/Conversion)"}
+              {isDeliveryConstrained ? "Delivery (Onboarding)" : `Demand — ${String(demandStage)}`}
             </div>
             <div className="text-[11px] text-gray-600">
-              Dem {fmtNum(C.demandDealsPerWeek,2)}/wk vs Del {fmtNum(C.deliveryDealsPerWeek,2)}/wk
+              {isDeliveryConstrained
+                ? `Dem ${fmtNum(C.demandDealsPerWeek,2)}/wk vs Del ${fmtNum(C.deliveryDealsPerWeek,2)}/wk`
+                : `Coverage at weakest stage: ${(Math.max(0, Math.min(1e3, demandStageCoverage)) * 100).toFixed(0)}%`}
             </div>
             <div className="text-[11px] mt-1">Δ Deals Ceiling: <DeltaTag value={dDealsCeil} /></div>
           </CardContent>
@@ -469,7 +519,7 @@ export default function ChiefOfStaffCockpit() {
         </Card>
       </div>
 
-      {/* -------- Full Funnel vs Benchmark (bars + badges) -------- */}
+      {/* -------- Full Funnel vs Benchmark -------- */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><BarChart3 className="h-5 w-5" />Full Funnel vs Benchmark</CardTitle>
@@ -542,158 +592,23 @@ export default function ChiefOfStaffCockpit() {
               </thead>
               <tbody>
                 {([
-                  {
-                    k: "Window (days)",
-                    t: "int",
-                    getC: () => curr.days,
-                    setC: (v:number)=> setCurr({ ...curr, days: Math.max(1, Math.round(v)) }),
-                    getP: () => prev.days,
-                    setP: (v:number)=> setPrev({ ...prev, days: Math.max(1, Math.round(v)) }),
-                  },
-                  {
-                    k: "Leads (90d)",
-                    t: "int",
-                    getC: () => curr.leads90,
-                    setC: (v:number)=> setCurr({ ...curr, leads90: Math.max(0, Math.round(v)) }),
-                    getP: () => prev.leads90,
-                    setP: (v:number)=> setPrev({ ...prev, leads90: Math.max(0, Math.round(v)) }),
-                    goodUp: true,
-                  },
-                  {
-                    k: "Lead → Qualified",
-                    t: "pct",
-                    getC: () => curr.qualifiedRate,
-                    setC: (v:number)=> setCurr({ ...curr, qualifiedRate: v }),
-                    getP: () => prev.qualifiedRate,
-                    setP: (v:number)=> setPrev({ ...prev, qualifiedRate: v }),
-                    goodUp: true,
-                  },
-                  {
-                    k: "Qualified → Booked",
-                    t: "pct",
-                    getC: () => curr.bookRate,
-                    setC: (v:number)=> setCurr({ ...curr, bookRate: v }),
-                    getP: () => prev.bookRate,
-                    setP: (v:number)=> setPrev({ ...prev, bookRate: v }),
-                    goodUp: true,
-                  },
-                  {
-                    k: "Booked → Show",
-                    t: "pct",
-                    getC: () => curr.showRate,
-                    setC: (v:number)=> setCurr({ ...curr, showRate: v }),
-                    getP: () => prev.showRate,
-                    setP: (v:number)=> setPrev({ ...prev, showRate: v }),
-                    goodUp: true,
-                  },
-                  {
-                    k: "Show → Proposal",
-                    t: "pct",
-                    getC: () => curr.proposalRate,
-                    setC: (v:number)=> setCurr({ ...curr, proposalRate: v }),
-                    getP: () => prev.proposalRate,
-                    setP: (v:number)=> setPrev({ ...prev, proposalRate: v }),
-                    goodUp: true,
-                  },
-                  {
-                    k: "Proposal → Won",
-                    t: "pct",
-                    getC: () => curr.winRate,
-                    setC: (v:number)=> setCurr({ ...curr, winRate: v }),
-                    getP: () => prev.winRate,
-                    setP: (v:number)=> setPrev({ ...prev, winRate: v }),
-                    goodUp: true,
-                  },
-                  {
-                    k: "ASP (€)",
-                    t: "eur",
-                    getC: () => curr.aspEUR,
-                    setC: (v:number)=> setCurr({ ...curr, aspEUR: v }),
-                    getP: () => prev.aspEUR,
-                    setP: (v:number)=> setPrev({ ...prev, aspEUR: v }),
-                    goodUp: true,
-                  },
-                  {
-                    k: "Gross Margin",
-                    t: "pct",
-                    getC: () => curr.gm,
-                    setC: (v:number)=> setCurr({ ...curr, gm: v }),
-                    getP: () => prev.gm,
-                    setP: (v:number)=> setPrev({ ...prev, gm: v }),
-                    goodUp: true,
-                  },
-                  {
-                    k: "Sales Cycle (days)",
-                    t: "int",
-                    getC: () => curr.salesCycleDays,
-                    setC: (v:number)=> setCurr({ ...curr, salesCycleDays: Math.max(0, Math.round(v)) }),
-                    getP: () => prev.salesCycleDays,
-                    setP: (v:number)=> setPrev({ ...prev, salesCycleDays: Math.max(0, Math.round(v)) }),
-                    goodUp: false, // lower is better
-                  },
-                  {
-                    k: "No-Show Rate",
-                    t: "pct",
-                    getC: () => curr.noShowRate,
-                    setC: (v:number)=> setCurr({ ...curr, noShowRate: v }),
-                    getP: () => prev.noShowRate,
-                    setP: (v:number)=> setPrev({ ...prev, noShowRate: v }),
-                    goodUp: false,
-                  },
-                  {
-                    k: "Onboardings / week",
-                    t: "num",
-                    getC: () => curr.onboardingsPerWeek,
-                    setC: (v:number)=> setCurr({ ...curr, onboardingsPerWeek: v }),
-                    getP: () => prev.onboardingsPerWeek,
-                    setP: (v:number)=> setPrev({ ...prev, onboardingsPerWeek: v }),
-                    goodUp: true,
-                  },
-                  {
-                    k: "Onboarding Days (avg)",
-                    t: "int",
-                    getC: () => curr.onboardingDaysAvg,
-                    setC: (v:number)=> setCurr({ ...curr, onboardingDaysAvg: Math.max(0, Math.round(v)) }),
-                    getP: () => prev.onboardingDaysAvg,
-                    setP: (v:number)=> setPrev({ ...prev, onboardingDaysAvg: Math.max(0, Math.round(v)) }),
-                    goodUp: false,
-                  },
-                  {
-                    k: "CAC (€)",
-                    t: "eur",
-                    getC: () => curr.CAC,
-                    setC: (v:number)=> setCurr({ ...curr, CAC: v }),
-                    getP: () => prev.CAC,
-                    setP: (v:number)=> setPrev({ ...prev, CAC: v }),
-                    goodUp: false,
-                  },
-                  {
-                    k: "Payback (days)",
-                    t: "int",
-                    getC: () => curr.paybackDays,
-                    setC: (v:number)=> setCurr({ ...curr, paybackDays: Math.max(0, Math.round(v)) }),
-                    getP: () => prev.paybackDays,
-                    setP: (v:number)=> setPrev({ ...prev, paybackDays: Math.max(0, Math.round(v)) }),
-                    goodUp: false,
-                  },
-                  {
-                    k: "DSO (days)",
-                    t: "int",
-                    getC: () => curr.DSO,
-                    setC: (v:number)=> setCurr({ ...curr, DSO: Math.max(0, Math.round(v)) }),
-                    getP: () => prev.DSO,
-                    setP: (v:number)=> setPrev({ ...prev, DSO: Math.max(0, Math.round(v)) }),
-                    goodUp: false,
-                  },
-                  {
-                    k: "Headcount",
-                    t: "int",
-                    getC: () => curr.headcount,
-                    setC: (v:number)=> setCurr({ ...curr, headcount: Math.max(0, Math.round(v)) }),
-                    getP: () => prev.headcount,
-                    setP: (v:number)=> setPrev({ ...prev, headcount: Math.max(0, Math.round(v)) }),
-                    goodUp: null,
-                  },
+                  { k: "Window (days)", t: "int", getC: () => curr.days, setC: (v:number)=> setCurr({ ...curr, days: Math.max(1, Math.round(v)) }), getP: () => prev.days, setP: (v:number)=> setPrev({ ...prev, days: Math.max(1, Math.round(v)) }) },
+                  { k: "Leads (90d)", t: "int", getC: () => curr.leads90, setC: (v:number)=> setCurr({ ...curr, leads90: Math.max(0, Math.round(v)) }), getP: () => prev.leads90, setP: (v:number)=> setPrev({ ...prev, leads90: Math.max(0, Math.round(v)) }), goodUp: true },
+                  { k: "Lead → Qualified", t: "pct", getC: () => curr.qualifiedRate, setC: (v:number)=> setCurr({ ...curr, qualifiedRate: v }), getP: () => prev.qualifiedRate, setP: (v:number)=> setPrev({ ...prev, qualifiedRate: v }), goodUp: true },
+                  { k: "Qualified → Booked", t: "pct", getC: () => curr.bookRate, setC: (v:number)=> setCurr({ ...curr, bookRate: v }), getP: () => prev.bookRate, setP: (v:number)=> setPrev({ ...prev, bookRate: v }), goodUp: true },
+                  { k: "Booked → Show", t: "pct", getC: () => curr.showRate, setC: (v:number)=> setCurr({ ...curr, showRate: v }), getP: () => prev.showRate, setP: (v:number)=> setPrev({ ...prev, showRate: v }), goodUp: true },
+                  { k: "Show → Proposal", t: "pct", getC: () => curr.proposalRate, setC: (v:number)=> setCurr({ ...curr, proposalRate: v }), getP: () => prev.proposalRate, setP: (v:number)=> setPrev({ ...prev, proposalRate: v }), goodUp: true },
+                  { k: "Proposal → Won", t: "pct", getC: () => curr.winRate, setC: (v:number)=> setCurr({ ...curr, winRate: v }), getP: () => prev.winRate, setP: (v:number)=> setPrev({ ...prev, winRate: v }), goodUp: true },
+                  { k: "ASP (€)", t: "eur", getC: () => curr.aspEUR, setC: (v:number)=> setCurr({ ...curr, aspEUR: v }), getP: () => prev.aspEUR, setP: (v:number)=> setPrev({ ...prev, aspEUR: v }), goodUp: true },
+                  { k: "Gross Margin", t: "pct", getC: () => curr.gm, setC: (v:number)=> setCurr({ ...curr, gm: v }), getP: () => prev.gm, setP: (v:number)=> setPrev({ ...prev, gm: v }), goodUp: true },
+                  { k: "Sales Cycle (days)", t: "int", getC: () => curr.salesCycleDays, setC: (v:number)=> setCurr({ ...curr, salesCycleDays: Math.max(0, Math.round(v)) }), getP: () => prev.salesCycleDays, setP: (v:number)=> setPrev({ ...prev, salesCycleDays: Math.max(0, Math.round(v)) }), goodUp: false },
+                  { k: "No-Show Rate", t: "pct", getC: () => curr.noShowRate, setC: (v:number)=> setCurr({ ...curr, noShowRate: v }), getP: () => prev.noShowRate, setP: (v:number)=> setPrev({ ...prev, noShowRate: v }), goodUp: false },
+                  { k: "Onboardings / wk", t: "num", getC: () => curr.onboardingsPerWeek, setC: (v:number)=> setCurr({ ...curr, onboardingsPerWeek: v }), getP: () => prev.onboardingsPerWeek, setP: (v:number)=> setPrev({ ...prev, onboardingsPerWeek: v }), goodUp: true },
+                  { k: "Onboarding Days (avg)", t: "int", getC: () => curr.onboardingDaysAvg, setC: (v:number)=> setCurr({ ...curr, onboardingDaysAvg: Math.max(0, Math.round(v)) }), getP: () => prev.onboardingDaysAvg, setP: (v:number)=> setPrev({ ...prev, onboardingDaysAvg: Math.max(0, Math.round(v)) }), goodUp: false },
+                  { k: "CAC (€)", t: "eur", getC: () => curr.CAC, setC: (v:number)=> setCurr({ ...curr, CAC: v }), getP: () => prev.CAC, setP: (v:number)=> setPrev({ ...prev, CAC: v }), goodUp: false },
+                  { k: "Payback (days)", t: "int", getC: () => curr.paybackDays, setC: (v:number)=> setCurr({ ...curr, paybackDays: Math.max(0, Math.round(v)) }), getP: () => prev.paybackDays, setP: (v:number)=> setPrev({ ...prev, paybackDays: Math.max(0, Math.round(v)) }), goodUp: false },
+                  { k: "DSO (days)", t: "int", getC: () => curr.DSO, setC: (v:number)=> setCurr({ ...curr, DSO: Math.max(0, Math.round(v)) }), getP: () => prev.DSO, setP: (v:number)=> setPrev({ ...prev, DSO: Math.max(0, Math.round(v)) }), goodUp: false },
+                  { k: "Headcount", t: "int", getC: () => curr.headcount, setC: (v:number)=> setCurr({ ...curr, headcount: Math.max(0, Math.round(v)) }), getP: () => prev.headcount, setP: (v:number)=> setPrev({ ...prev, headcount: Math.max(0, Math.round(v)) }), goodUp: null },
                 ] as const).map((row, i) => {
                   const prevVal = row.getP();
                   const currVal = row.getC();
@@ -702,7 +617,9 @@ export default function ChiefOfStaffCockpit() {
                     : null;
                   let good: null | boolean = null;
                   if (pct !== null) {
+                    // @ts-ignore
                     if (row.goodUp === null || row.goodUp === undefined) good = null;
+                    // @ts-ignore
                     else good = row.goodUp ? pct >= 0 : pct < 0;
                   }
                   const pctStr = pct === null ? "—" : (pct * 100).toFixed(1) + "%";
@@ -712,15 +629,15 @@ export default function ChiefOfStaffCockpit() {
                       <td className="p-2 text-left">{row.k}</td>
                       <td className="p-2 text-center min-w-[160px]">
                         {row.t === "pct" ? (
-                          <PercentInput value={currVal} onChange={(v) => row.setC(v)} />
+                          <PercentInput value={currVal as number} onChange={(v) => row.setC(v)} />
                         ) : row.t === "eur" ? (
-                          <DecimalInput value={currVal} onChange={(v) => row.setC(v)} />
+                          <DecimalInput value={currVal as number} onChange={(v) => row.setC(v)} />
                         ) : row.t === "num" ? (
-                          <DecimalInput step={0.1} value={currVal} onChange={(v) => row.setC(v)} />
+                          <DecimalInput step={0.1} value={currVal as number} onChange={(v) => row.setC(v)} />
                         ) : (
                           <Input
                             type="number"
-                            value={currVal}
+                            value={currVal as number}
                             onChange={(e) => row.setC(parseFloat(e.target.value))}
                             className="text-center"
                           />
@@ -731,15 +648,15 @@ export default function ChiefOfStaffCockpit() {
                       </td>
                       <td className="p-2 text-center min-w-[160px]">
                         {row.t === "pct" ? (
-                          <PercentInput value={prevVal} onChange={(v) => row.setP(v)} />
+                          <PercentInput value={prevVal as number} onChange={(v) => row.setP(v)} />
                         ) : row.t === "eur" ? (
-                          <DecimalInput value={prevVal} onChange={(v) => row.setP(v)} />
+                          <DecimalInput value={prevVal as number} onChange={(v) => row.setP(v)} />
                         ) : row.t === "num" ? (
-                          <DecimalInput step={0.1} value={prevVal} onChange={(v) => row.setP(v)} />
+                          <DecimalInput step={0.1} value={prevVal as number} onChange={(v) => row.setP(v)} />
                         ) : (
                           <Input
                             type="number"
-                            value={prevVal}
+                            value={prevVal as number}
                             onChange={(e) => row.setP(parseFloat(e.target.value))}
                             className="text-center"
                           />
@@ -752,7 +669,7 @@ export default function ChiefOfStaffCockpit() {
             </table>
           </div>
           <p className="text-[11px] text-gray-500 mt-2 text-center">
-            All numeric cells are center-aligned for quick scanning. Edit inline; % Change colors green when moving in the “good” direction.
+            All numeric cells are center-aligned for quick scanning. Edit inline; % Change turns green when moving in the “good” direction.
           </p>
         </CardContent>
       </Card>
