@@ -95,14 +95,6 @@ function PercentInput({
   );
 }
 
-function MiniBar({ pct, color = "#4f46e5" }: { pct: number; color?: string }) {
-  const w = Math.max(0, Math.min(100, pct * 100));
-  return (
-    <div className="w-full h-2 rounded bg-gray-200 overflow-hidden">
-      <div className="h-full" style={{ width: `${w}%`, background: color }} />
-    </div>
-  );
-}
 const covColor = (ratio: number) =>
   ratio >= 1 ? "#059669" : ratio >= 0.95 ? "#f59e0b" : "#dc2626";
 
@@ -323,7 +315,6 @@ export default function ChiefOfStaffCockpit() {
   const dLeads = deltaPct(curr.leads90, prev.leads90);
 
   const dGP90 = deltaPct(C.gp90, P.gp90);
-  const dDealsCeil = deltaPct(C.dealsPerWeekCeil, P.dealsPerWeekCeil);
 
   const loadPresets = () => {
     setCurr(CURR.inputs);
@@ -411,13 +402,9 @@ export default function ChiefOfStaffCockpit() {
     return fmtNum(m.cur);
   };
 
-  const topImpacts = [...funnelRows]
-    .sort((a, b) => b.impact.deltaGP90 - a.impact.deltaGP90)
-    .slice(0, 2);
-
   return (
     <main className="mx-auto max-w-7xl p-6 space-y-6">
-      {/* Title row (no global header now) */}
+      {/* Title row */}
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">⚡ Throughput Funnel Analysis</h2>
@@ -428,7 +415,7 @@ export default function ChiefOfStaffCockpit() {
           </div>
         </div>
 
-        {/* Constraint banner — bigger & green */}
+        {/* Constraint banner — bigger & green; larger uplift text */}
         <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4">
           <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2">
             <div className="font-semibold text-emerald-900 text-lg md:text-xl">
@@ -439,16 +426,16 @@ export default function ChiefOfStaffCockpit() {
                 <span className="font-bold">Demand — {topDemandImpact.stage}</span>
               )}
             </div>
-            <div className="text-xs md:text-sm text-emerald-900/90">
+            <div className="text-base md:text-lg font-semibold text-emerald-900">
               {isDeliveryConstrained
                 ? <>Demand {fmtNum(C.demandDealsPerWeek,2)}/wk vs Delivery {fmtNum(C.deliveryDealsPerWeek,2)}/wk</>
-                : <>Largest uplift if fixed: {eur(topDemandImpact.deltaGP90, 0)} (90d GP)</>}
+                : <>Largest uplift if fixed: {eur(topDemandImpact.deltaGP90, 0)} <span className="font-normal text-emerald-900/90">(90d GP)</span></>}
             </div>
           </div>
         </div>
       </motion.div>
 
-      {/* -------- Top Widgets (2 rows of 4). Replaced Constraint with Best Performing Metric -------- */}
+      {/* -------- Top Widgets (2 rows of 4). No mini-bars; bigger numbers -------- */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Best Performing Metric */}
         <Card>
@@ -458,16 +445,13 @@ export default function ChiefOfStaffCockpit() {
           <CardContent className="pt-0">
             {bestMetric ? (
               <>
-                <div className="text-base font-semibold">{bestMetric.label}</div>
-                <div className="text-[11px] text-gray-600">Attainment: {(bestMetric.ratio * 100).toFixed(0)}% of target</div>
+                <div className="text-sm font-medium">{bestMetric.label}</div>
+                <div className="text-[12px] text-gray-600">Attainment: {(bestMetric.ratio * 100).toFixed(0)}% of target</div>
                 <div className="mt-1 flex items-baseline justify-between">
-                  <div className="text-lg font-semibold">{renderBestValue(bestMetric)}</div>
-                  <div className="text-[11px] text-gray-600 flex items-center gap-1">
+                  <div className="text-2xl md:text-3xl font-semibold">{renderBestValue(bestMetric)}</div>
+                  <div className="text-[12px] text-gray-600 flex items-center gap-1">
                     vs prev <DeltaTag value={bestMetric.delta ?? null} />
                   </div>
-                </div>
-                <div className="mt-1">
-                  <MiniBar pct={Math.max(0, Math.min(1, bestMetric.ratio))} color="#16a34a" />
                 </div>
               </>
             ) : (
@@ -479,51 +463,57 @@ export default function ChiefOfStaffCockpit() {
         {/* Throughput ceiling */}
         <KpiCard
           title="Throughput Ceiling (GP 90d)"
+          mainClass="text-2xl md:text-3xl"
           main={eur(C.gp90, 0)}
           sub={`Deals/wk: ${fmtNum(C.dealsPerWeekCeil,2)}`}
           delta={dGP90}
         />
 
         {/* R/FTE */}
-        <KpiCard title="R/FTE Ceiling" main={eur(C.rfteCeil, 0)} sub={`HC: ${fmtNum(curr.headcount,0)}`} />
+        <KpiCard
+          title="R/FTE Ceiling"
+          mainClass="text-2xl md:text-3xl"
+          main={eur(C.rfteCeil, 0)}
+          sub={`HC: ${fmtNum(curr.headcount,0)}`}
+        />
 
         {/* Cash efficiency */}
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">Cash Efficiency (GP30/CAC)</CardTitle></CardHeader>
           <CardContent className="pt-0">
-            <div className={`text-lg font-semibold ${C.gp30OverCAC < 3 && C.gp30OverCAC > 0 ? "text-red-600" : "text-emerald-600"}`}>
+            <div className={`text-2xl md:text-3xl font-semibold ${C.gp30OverCAC < 3 && C.gp30OverCAC > 0 ? "text-red-600" : "text-emerald-600"}`}>
               {fmtNum(C.gp30OverCAC,2)}
             </div>
-            <div className="text-[11px] text-gray-600">{"<3 => cash constraint"}</div>
+            <div className="text-[12px] text-gray-600 mt-1">{"<3 => cash constraint"}</div>
           </CardContent>
         </Card>
 
-        {/* Row 2 — widgets with comparisons */}
+        {/* Row 2 — bigger numbers; no bars */}
         <RateWidget title="Qualified Rate (MQL→SQL)" value={curr.qualifiedRate} delta={dQualifiedRate} />
         <RateWidget title="Win Rate (Proposal→Won)" value={curr.winRate} delta={dWinRate} green />
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">ASP</CardTitle></CardHeader>
           <CardContent className="pt-0">
             <div className="flex items-baseline justify-between">
-              <div className="text-lg font-semibold">{eur(curr.aspEUR, 0)}</div>
-              <div className="text-[11px] text-gray-600 flex items-center gap-1">vs prev <DeltaTag value={dASP} /></div>
+              <div className="text-2xl md:text-3xl font-semibold">{eur(curr.aspEUR, 0)}</div>
+              <div className="text-[12px] text-gray-600 flex items-center gap-1">vs prev <DeltaTag value={dASP} /></div>
             </div>
-            <div className="text-[11px] text-gray-600">GM: {fmtPct(curr.gm)}</div>
+            <div className="text-[12px] text-gray-600 mt-1">GM: {fmtPct(curr.gm)}</div>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">Onboardings Capacity</CardTitle></CardHeader>
           <CardContent className="pt-0">
             <div className="flex items-baseline justify-between">
-              <div className="text-lg font-semibold">{fmtNum(curr.onboardingsPerWeek,2)}/wk</div>
-              <div className="text-[11px] text-gray-600 flex items-center gap-1">vs prev <DeltaTag value={dOnboardings} /></div>
+              <div className="text-2xl md:text-3xl font-semibold">{fmtNum(curr.onboardingsPerWeek,2)}/wk</div>
+              <div className="text-[12px] text-gray-600 flex items-center gap-1">vs prev <DeltaTag value={dOnboardings} /></div>
             </div>
-            <div className="text-[11px] text-gray-600">Avg Days: {fmtNum(curr.onboardingDaysAvg,0)}</div>
+            <div className="text-[12px] text-gray-600 mt-1">Avg Days: {fmtNum(curr.onboardingDaysAvg,0)}</div>
           </CardContent>
         </Card>
       </div>
 
-      {/* -------- Full Funnel vs Benchmark (includes Delivery) -------- */}
+      {/* -------- Full Funnel vs Benchmark (keeps bars) -------- */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><BarChart3 className="h-5 w-5" />Full Funnel vs Benchmark</CardTitle>
@@ -599,14 +589,18 @@ export default function ChiefOfStaffCockpit() {
 }
 
 /* ---------- small presentational helpers ---------- */
-function KpiCard({ title, main, sub, delta }: { title: string; main: string; sub?: string; delta?: number | null }) {
+function KpiCard({
+  title, main, sub, delta, mainClass = "text-lg"
+}: {
+  title: string; main: string; sub?: string; delta?: number | null; mainClass?: string;
+}) {
   return (
     <Card>
       <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">{title}</CardTitle></CardHeader>
       <CardContent className="pt-0">
-        <div className="text-lg font-semibold">{main}</div>
-        {sub && <div className="text-[11px] text-gray-600">{sub}</div>}
-        {typeof delta !== "undefined" && <div className="text-[11px] mt-1">Δ vs previous: <DeltaTag value={delta ?? null} /></div>}
+        <div className={`${mainClass} font-semibold`}>{main}</div>
+        {sub && <div className="text-[12px] text-gray-600 mt-1">{sub}</div>}
+        {typeof delta !== "undefined" && <div className="text-[12px] mt-1">Δ vs previous: <DeltaTag value={delta ?? null} /></div>}
       </CardContent>
     </Card>
   );
@@ -618,10 +612,10 @@ function RateWidget({ title, value, delta, green = false }: { title: string; val
       <CardHeader className="pb-2"><CardTitle className="text-xs text-gray-500">{title}</CardTitle></CardHeader>
       <CardContent className="pt-0">
         <div className="flex items-baseline justify-between">
-          <div className="text-lg font-semibold">{fmtPct(value)}</div>
-          <div className="text-[11px] text-gray-600 flex items-center gap-1">vs prev <DeltaTag value={delta} /></div>
+          <div className={`text-2xl md:text-3xl font-semibold ${green ? "text-emerald-700" : "text-gray-900"}`}>{fmtPct(value)}</div>
+          <div className="text-[12px] text-gray-600 flex items-center gap-1">vs prev <DeltaTag value={delta} /></div>
         </div>
-        <div className="mt-1"><MiniBar pct={value} color={green ? "#16a34a" : "#4f46e5"} /></div>
+        {/* No bar below; keeping it clean and number-forward */}
       </CardContent>
     </Card>
   );
