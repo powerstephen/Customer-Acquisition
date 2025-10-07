@@ -167,7 +167,7 @@ type Benchmarks = {
   proposalRate: number;
   winRate: number;
   aspEUR: number;
-  onboardingsPerWeek: number; // NEW: target for delivery capacity
+  onboardingsPerWeek: number;
 };
 
 /* ---------------- Presets (illustrative) ---------------- */
@@ -320,6 +320,8 @@ export default function ChiefOfStaffCockpit() {
   const dWinRate = deltaPct(curr.winRate, prev.winRate);
   const dASP = deltaPct(curr.aspEUR, prev.aspEUR);
   const dOnboardings = deltaPct(curr.onboardingsPerWeek, prev.onboardingsPerWeek);
+  const dLeads = deltaPct(curr.leads90, prev.leads90);
+
   const dGP90 = deltaPct(C.gp90, P.gp90);
   const dDealsCeil = deltaPct(C.dealsPerWeekCeil, P.dealsPerWeekCeil);
 
@@ -385,8 +387,29 @@ export default function ChiefOfStaffCockpit() {
     { stage: "Proposal→Won", key: "won" as const, ...impactForStage("won") },
   ];
   const topDemandImpact = demandImpacts.reduce((a, b) => (b.deltaGP90 > a.deltaGP90 ? b : a), demandImpacts[0]);
-
   const isDeliveryConstrained = C.deliveryDealsPerWeek + 1e-9 < C.demandDealsPerWeek;
+
+  // -------- Best Performing Metric (highest attainment vs benchmark) --------
+  type MetricKind = "num" | "pct" | "eur";
+  const bestPool = [
+    { label: "Leads", ratio: leadsBenchRatio, cur: curr.leads90, prev: prev.leads90, kind: "num" as MetricKind, delta: dLeads },
+    { label: "Lead → Qualified", ratio: lqBenchRatio, cur: curr.qualifiedRate, prev: prev.qualifiedRate, kind: "pct" as MetricKind, delta: dQualifiedRate },
+    { label: "Qualified → Booked", ratio: qbBenchRatio, cur: curr.bookRate, prev: prev.bookRate, kind: "pct" as MetricKind, delta: deltaPct(curr.bookRate, prev.bookRate) },
+    { label: "Booked → Show", ratio: bsBenchRatio, cur: curr.showRate, prev: prev.showRate, kind: "pct" as MetricKind, delta: deltaPct(curr.showRate, prev.showRate) },
+    { label: "Show → Proposal", ratio: spBenchRatio, cur: curr.proposalRate, prev: prev.proposalRate, kind: "pct" as MetricKind, delta: deltaPct(curr.proposalRate, prev.proposalRate) },
+    { label: "Proposal → Won", ratio: pwBenchRatio, cur: curr.winRate, prev: prev.winRate, kind: "pct" as MetricKind, delta: dWinRate },
+    { label: "ASP (€)", ratio: bench.aspEUR > 0 ? curr.aspEUR / bench.aspEUR : NaN, cur: curr.aspEUR, prev: prev.aspEUR, kind: "eur" as MetricKind, delta: dASP },
+    { label: "Delivery (Onboarding) / wk", ratio: delBenchRatio, cur: curr.onboardingsPerWeek, prev: prev.onboardingsPerWeek, kind: "num" as MetricKind, delta: dOnboardings },
+  ].filter((x) => Number.isFinite(x.ratio));
+
+  const bestMetric = bestPool.sort((a, b) => b.ratio - a.ratio)[0];
+
+  const renderBestValue = (m: typeof bestMetric) => {
+    if (!m) return "—";
+    if (m.kind === "pct") return fmtPct(m.cur);
+    if (m.kind === "eur") return eur(m.cur, 0);
+    return fmtNum(m.cur);
+  };
 
   const topImpacts = [...funnelRows]
     .sort((a, b) => b.impact.deltaGP90 - a.impact.deltaGP90)
@@ -399,24 +422,24 @@ export default function ChiefOfStaffCockpit() {
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">⚡ Throughput Funnel Analysis</h2>
           <div className="flex items-center gap-2">
-            <Button onClick={() => { setCurr(CURR.inputs); setPrev(PREV.inputs); setBench(DEFAULT_BENCH); }} className="flex items-center gap-2">
+            <Button onClick={loadPresets} className="flex items-center gap-2">
               <Database className="h-4 w-4" /> Load example data
             </Button>
           </div>
         </div>
 
-        {/* Constraint banner (neutral, navy label) */}
-        <div className="mt-3 rounded-lg border px-4 py-3 bg-white">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-            <div className="text-sm md:text-base font-medium">
-              <span className="text-blue-800">Current bottleneck:</span>{" "}
+        {/* Constraint banner — bigger & green */}
+        <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4">
+          <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2">
+            <div className="font-semibold text-emerald-900 text-lg md:text-xl">
+              Current bottleneck:&nbsp;
               {isDeliveryConstrained ? (
-                <span className="text-red-700">Delivery (Onboarding)</span>
+                <span className="font-bold">Delivery (Onboarding)</span>
               ) : (
-                <span className="text-gray-900">Demand — {topDemandImpact.stage}</span>
+                <span className="font-bold">Demand — {topDemandImpact.stage}</span>
               )}
             </div>
-            <div className="text-xs text-gray-700">
+            <div className="text-xs md:text-sm text-emerald-900/90">
               {isDeliveryConstrained
                 ? <>Demand {fmtNum(C.demandDealsPerWeek,2)}/wk vs Delivery {fmtNum(C.deliveryDealsPerWeek,2)}/wk</>
                 : <>Largest uplift if fixed: {eur(topDemandImpact.deltaGP90, 0)} (90d GP)</>}
@@ -425,25 +448,41 @@ export default function ChiefOfStaffCockpit() {
         </div>
       </motion.div>
 
-      {/* -------- Top Widgets (2 rows of 4) -------- */}
+      {/* -------- Top Widgets (2 rows of 4). Replaced Constraint with Best Performing Metric -------- */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Constraint card (neutral) */}
+        {/* Best Performing Metric */}
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-xs text-blue-800">Current bottleneck</CardTitle></CardHeader>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs text-gray-500">Best Performing Metric</CardTitle>
+          </CardHeader>
           <CardContent className="pt-0">
-            <div className="text-base font-semibold">
-              {isDeliveryConstrained ? "Delivery (Onboarding)" : `Demand — ${topDemandImpact.stage}`}
-            </div>
-            <div className="text-[11px] text-gray-700">
-              {isDeliveryConstrained
-                ? `Dem ${fmtNum(C.demandDealsPerWeek,2)}/wk vs Del ${fmtNum(C.deliveryDealsPerWeek,2)}/wk`
-                : `Fix to benchmark ⇒ ${eur(topDemandImpact.deltaGP90, 0)} GP uplift (90d)`}
-            </div>
+            {bestMetric ? (
+              <>
+                <div className="text-base font-semibold">{bestMetric.label}</div>
+                <div className="text-[11px] text-gray-600">Attainment: {(bestMetric.ratio * 100).toFixed(0)}% of target</div>
+                <div className="mt-1 flex items-baseline justify-between">
+                  <div className="text-lg font-semibold">{renderBestValue(bestMetric)}</div>
+                  <div className="text-[11px] text-gray-600 flex items-center gap-1">
+                    vs prev <DeltaTag value={bestMetric.delta ?? null} />
+                  </div>
+                </div>
+                <div className="mt-1">
+                  <MiniBar pct={Math.max(0, Math.min(1, bestMetric.ratio))} color="#16a34a" />
+                </div>
+              </>
+            ) : (
+              <div className="text-sm text-gray-500">Set benchmarks to evaluate best performance.</div>
+            )}
           </CardContent>
         </Card>
 
         {/* Throughput ceiling */}
-        <KpiCard title="Throughput Ceiling (GP 90d)" main={eur(C.gp90, 0)} sub={`Deals/wk: ${fmtNum(C.dealsPerWeekCeil,2)}`} delta={dGP90} />
+        <KpiCard
+          title="Throughput Ceiling (GP 90d)"
+          main={eur(C.gp90, 0)}
+          sub={`Deals/wk: ${fmtNum(C.dealsPerWeekCeil,2)}`}
+          delta={dGP90}
+        />
 
         {/* R/FTE */}
         <KpiCard title="R/FTE Ceiling" main={eur(C.rfteCeil, 0)} sub={`HC: ${fmtNum(curr.headcount,0)}`} />
@@ -484,7 +523,7 @@ export default function ChiefOfStaffCockpit() {
         </Card>
       </div>
 
-      {/* -------- Full Funnel vs Benchmark (now includes Delivery) -------- */}
+      {/* -------- Full Funnel vs Benchmark (includes Delivery) -------- */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><BarChart3 className="h-5 w-5" />Full Funnel vs Benchmark</CardTitle>
@@ -553,50 +592,8 @@ export default function ChiefOfStaffCockpit() {
         setPrev={setPrev}
       />
 
-      {/* -------- Benchmarks / Targets (incl. Onboarding target) -------- */}
-      <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><Target className="h-5 w-5" />Benchmarks / Targets</CardTitle></CardHeader>
-        <CardContent className="grid md:grid-cols-2 gap-6">
-          <div>
-            <div className="font-medium mb-2">Volume</div>
-            <div className="grid grid-cols-2 gap-3 items-center text-sm">
-              <Label>Leads Target (90d)</Label>
-              <Input
-                type="number"
-                className="text-center"
-                value={bench.leads90}
-                onChange={(e) => setBench({ ...bench, leads90: parseInt(e.target.value || "0", 10) })}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3 items-center text-sm mt-3">
-              <Label>Onboardings Target (/wk)</Label>
-              <DecimalInput value={bench.onboardingsPerWeek} onChange={(v)=> setBench({ ...bench, onboardingsPerWeek: v })} />
-            </div>
-          </div>
-          <div>
-            <div className="font-medium mb-2">Conversion Targets</div>
-            <div className="grid grid-cols-2 gap-3 items-center text-sm">
-              <Label>Lead → Qualified</Label><PercentInput value={bench.qualifiedRate} onChange={(v) => setBench({ ...bench, qualifiedRate: v })} />
-              <Label>Qualified → Booked</Label><PercentInput value={bench.bookRate} onChange={(v) => setBench({ ...bench, bookRate: v })} />
-              <Label>Booked → Show</Label><PercentInput value={bench.showRate} onChange={(v) => setBench({ ...bench, showRate: v })} />
-              <Label>Show → Proposal</Label><PercentInput value={bench.proposalRate} onChange={(v) => setBench({ ...bench, proposalRate: v })} />
-              <Label>Proposal → Won</Label><PercentInput value={bench.winRate} onChange={(v) => setBench({ ...bench, winRate: v })} />
-            </div>
-            <div className="grid grid-cols-2 gap-3 items-center text-sm mt-3">
-              <Label>ASP Target (€)</Label>
-              <Input
-                type="number"
-                className="text-center"
-                value={bench.aspEUR}
-                onChange={(e) => setBench({ ...bench, aspEUR: parseFloat(e.target.value || "0") })}
-              />
-            </div>
-          </div>
-          <div className="text-xs text-gray-600 md:col-span-2 text-center">
-            Bars & badges use these targets. Green ≥100%, Amber 95–99%, Red &lt;95% of target.
-          </div>
-        </CardContent>
-      </Card>
+      {/* -------- Benchmarks / Targets -------- */}
+      <BenchmarksCard bench={bench} setBench={setBench} />
     </main>
   );
 }
@@ -727,6 +724,54 @@ function InputsTable({
         <p className="text-[11px] text-gray-500 mt-2 text-center">
           Edit inline; % Change turns green when moving in the “good” direction.
         </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function BenchmarksCard({ bench, setBench }: { bench: Benchmarks; setBench: (b: Benchmarks) => void }) {
+  return (
+    <Card>
+      <CardHeader><CardTitle className="flex items-center gap-2"><Target className="h-5 w-5" />Benchmarks / Targets</CardTitle></CardHeader>
+      <CardContent className="grid md:grid-cols-2 gap-6">
+        <div>
+          <div className="font-medium mb-2">Volume</div>
+          <div className="grid grid-cols-2 gap-3 items-center text-sm">
+            <Label>Leads Target (90d)</Label>
+            <Input
+              type="number"
+              className="text-center"
+              value={bench.leads90}
+              onChange={(e) => setBench({ ...bench, leads90: parseInt(e.target.value || "0", 10) })}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3 items-center text-sm mt-3">
+            <Label>Onboardings Target (/wk)</Label>
+            <DecimalInput value={bench.onboardingsPerWeek} onChange={(v)=> setBench({ ...bench, onboardingsPerWeek: v })} />
+          </div>
+        </div>
+        <div>
+          <div className="font-medium mb-2">Conversion & Commercial</div>
+          <div className="grid grid-cols-2 gap-3 items-center text-sm">
+            <Label>Lead → Qualified</Label><PercentInput value={bench.qualifiedRate} onChange={(v) => setBench({ ...bench, qualifiedRate: v })} />
+            <Label>Qualified → Booked</Label><PercentInput value={bench.bookRate} onChange={(v) => setBench({ ...bench, bookRate: v })} />
+            <Label>Booked → Show</Label><PercentInput value={bench.showRate} onChange={(v) => setBench({ ...bench, showRate: v })} />
+            <Label>Show → Proposal</Label><PercentInput value={bench.proposalRate} onChange={(v) => setBench({ ...bench, proposalRate: v })} />
+            <Label>Proposal → Won</Label><PercentInput value={bench.winRate} onChange={(v) => setBench({ ...bench, winRate: v })} />
+          </div>
+          <div className="grid grid-cols-2 gap-3 items-center text-sm mt-3">
+            <Label>ASP Target (€)</Label>
+            <Input
+              type="number"
+              className="text-center"
+              value={bench.aspEUR}
+              onChange={(e) => setBench({ ...bench, aspEUR: parseFloat(e.target.value || "0") })}
+            />
+          </div>
+        </div>
+        <div className="text-xs text-gray-600 md:col-span-2 text-center">
+          Bars & badges use these targets. Green ≥100%, Amber 95–99%, Red &lt;95% of target.
+        </div>
       </CardContent>
     </Card>
   );
