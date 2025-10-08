@@ -1,19 +1,15 @@
-// app/layout.tsx
-import type { Metadata } from "next";
 import "./globals.css";
+import type { ReactNode } from "react";
 
-export const metadata: Metadata = {
-  title: "Throughput Funnel Analysis — Cargo.one",
-  description: "Identify bottlenecks, benchmarks, and throughput impact.",
+export const metadata = {
+  title: "Customer Acquisition Velocity",
+  description: "SaaS acquisition velocity dashboard"
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body className="bg-white text-gray-900">
-        {/* No header — page owns its own title */}
-        <main>{children}</main>
-      </body>
+      <body className="min-h-screen antialiased">{children}</body>
     </html>
   );
 }
